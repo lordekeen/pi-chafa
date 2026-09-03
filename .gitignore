@@ -4,3 +4,5 @@ dist/
 .superpowers/
 *.tsbuildinfo
 *.log
+.pi/
+.vitest/
