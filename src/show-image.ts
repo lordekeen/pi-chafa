@@ -3,7 +3,7 @@ import type {
 	ExtensionContext,
 	ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
-import { getCapabilities } from "@earendil-works/pi-tui";
+import { getCapabilities, Text } from "@earendil-works/pi-tui";
 import { type Static, Type } from "typebox";
 import {
 	buildSymbolsArgs,
@@ -166,10 +166,40 @@ export function textFromContent(
 		.join("\n");
 }
 
+/** User-visible text for a completed result: summary caption + symbols payload (spec §4.1.3). */
+export function displayText(
+	summary: string,
+	details: ShowImageDetails | undefined,
+): string {
+	if (!details?.payload) return summary;
+	return `${summary}\n${details.payload}`;
+}
+
+/** renderCall: compact "Show Image <target>" (spec §4.1 registration table). */
+export function renderShowCall(args: ShowImageParams): Text {
+	const target = (args.path ?? args.glob ?? "").trim();
+	return new Text(`Show Image ${target}`, 0, 0);
+}
+
+/**
+ * renderResult: single component for both delivery modes.
+ * - symbols: caption + ANSI payload read back from details (verbatim lines, §3.3)
+ * - native / partial / error: the model-visible text note only (host draws
+ *   image blocks itself; error rows get host error styling via context.isError)
+ */
+export function renderShowResult(
+	result: AgentToolResult<ShowImageDetails>,
+	isError: boolean,
+): Text {
+	const summary = textFromContent(result.content);
+	if (isError || !result.details) return new Text(summary, 0, 0);
+	return new Text(displayText(summary, result.details), 0, 0);
+}
+
 /**
  * Build the show_image ToolDefinition with injectable seams. Without overrides,
- * every seam points at the real modules. renderCall/renderResult are added in
- * the next task (absent here, the host uses its default row rendering).
+ * every seam points at the real modules. renderCall/renderResult render the
+ * tool call and result as Text components.
  */
 export function buildShowImageTool(
 	deps?: Partial<ShowImageDeps>,
@@ -183,6 +213,13 @@ export function buildShowImageTool(
 			"Display one or more image files to the USER in the terminal. Use when the user asks to see/preview a picture, screenshot, plot, icon, or diagram, or when showing an image would help the user understand the task. The image is rendered for the user only; you do not receive its contents.",
 		parameters: showImageParams,
 		renderShell: "default",
+		renderCall: (args: ShowImageParams) => renderShowCall(args),
+		renderResult: (
+			result: AgentToolResult<ShowImageDetails>,
+			_options,
+			_theme,
+			context,
+		) => renderShowResult(result, context.isError),
 		execute: async (
 			_toolCallId: string,
 			params: ShowImageParams,
