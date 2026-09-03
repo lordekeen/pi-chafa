@@ -1,6 +1,6 @@
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, sep } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { expandTargets, globToRegExp, hasMagic, readBytes, sniffMime } from "../src/images.js";
 
@@ -58,6 +58,25 @@ describe("expandTargets", () => {
 	});
 	it("throws no-files-matched for a glob with zero matches", () => {
 		expect(() => expandTargets("**/*.svg", dir)).toThrow(/no files matched \*\*\/\*\.svg/);
+	});
+	it("matches a top-level file and a nested file for a ** glob", () => {
+		// Regression: **/ in any position matches zero-or-more directories, so a
+		// top-level file must not be silently omitted after resolution to an
+		// absolute /<cwd>/**/*.gif pattern.
+		writeFileSync(join(dir, "top.gif"), "gif-bytes");
+		expect(expandTargets("**/*.gif", dir)).toEqual([
+			join(dir, "sub", "c.gif"),
+			join(dir, "top.gif"),
+		]);
+	});
+	it("matches an absolute mid-** pattern at zero or more depths", () => {
+		// globToRegExp must treat a mid-pattern ** the same as a leading one, so
+		// an absolute /<cwd>/**/*.gif regex still matches top-level files.
+		writeFileSync(join(dir, "top.gif"), "gif-bytes");
+		const posixDir = dir.split(sep).join("/");
+		const re = globToRegExp(`${posixDir}/**/*.gif`);
+		expect(re.test(`${posixDir}/top.gif`)).toBe(true);
+		expect(re.test(`${posixDir}/sub/c.gif`)).toBe(true);
 	});
 });
 

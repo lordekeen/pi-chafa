@@ -16,28 +16,40 @@ function escapeRegExpChar(char: string): string {
 }
 
 /**
- * Translate a slash-separated glob to an anchored RegExp. A whole-segment
- * double star ("`**`") crosses "/", while a single star or question mark
- * does not. A LEADING double-star glob (more segments follow) matches
- * zero-or-more whole directory segments, so it matches a bare `a.jpg` as
- * well as `sub/deep/b.jpg`; its optional group carries the trailing "/".
- * Separators are emitted per segment index so an absolute pattern (leading
- * "/") keeps the "/" that expandTargets relies on when matching against
- * absolute paths.
+ * Translate a slash-separated glob to an anchored RegExp. A double-star
+ * segment ("**") matches zero-or-more whole directory segments in ANY
+ * position, not just leading: "**" then a suffix matches both a bare file
+ * and `a/b/file`; a middle "**" matches `a/b` as well as `a/x/b`; a trailing
+ * "**" matches everything under the prefix. A single star or question mark
+ * stays within one segment. The double star is emitted as an optional group
+ * that carries its own trailing "/", so the segment after it needs no extra
+ * separator. An empty leading segment (an absolute pattern) contributes the
+ * root "/" that expandTargets relies on when matching absolute paths.
  */
 export function globToRegExp(pattern: string): RegExp {
 	const parts = pattern.replaceAll("\\", "/").split("/");
 	let out = "";
-	const leadingGlobStar = parts.length > 1 && parts[0] === "**";
-	const segments = leadingGlobStar ? parts.slice(1) : parts;
-	if (leadingGlobStar) out += "(?:.*/)?";
-	for (let i = 0; i < segments.length; i++) {
-		if (i > 0) out += "/";
-		const part = segments[i] as string;
-		if (part === "**") {
-			out += ".*";
+	// True when the previous part was a non-final "**": its optional group may
+	// end in "/", so the next segment must not receive another separator.
+	let afterGlobStar = false;
+	for (let i = 0; i < parts.length; i++) {
+		const part = parts[i] as string;
+		if (part === "") {
+			// Only a leading empty part (absolute pattern) denotes a segment: the
+			// root "/". Interior/trailing empties are repeated or trailing "/".
+			if (out === "") out += "/";
+			afterGlobStar = false;
 			continue;
 		}
+		if (part === "**") {
+			const isFinal = i === parts.length - 1;
+			if (out !== "" && !out.endsWith("/") && !afterGlobStar) out += "/";
+			out += isFinal ? ".*" : "(?:.*/)?";
+			afterGlobStar = !isFinal;
+			continue;
+		}
+		if (out !== "" && !out.endsWith("/") && !afterGlobStar) out += "/";
+		afterGlobStar = false;
 		for (const char of part) {
 			if (char === "*") out += "[^/]*";
 			else if (char === "?") out += "[^/]";
