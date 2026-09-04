@@ -395,6 +395,7 @@ export async function runImagesCommand(
 						}
 
 						list.handleInput(data);
+						tui.requestRender();
 					},
 				};
 			});
