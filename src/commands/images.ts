@@ -50,11 +50,13 @@ export const SETTING_DESCRIPTIONS = {
 		"Chafa color mode: full (24-bit truecolor), 256, 240, 16, 8, 2, or none.",
 	dither: "Chafa dithering algorithm: none, ordered, diffusion, or noise.",
 	symbolsSet:
-		"Chafa symbol classes: block+border, block, border, ascii, braille, all, or custom.",
-	cellWidth: "Width in terminal columns for symbols rendering (default 60).",
-	maxRows: "Row height limit cap for symbols rendering (default 50).",
+		"Chafa symbol classes: block+border, block, border, ascii, braille, or all.",
+	cellWidth:
+		"Width in terminal columns (default 60). Enter/Space cycles · Press 'e' to edit custom width.",
+	maxRows:
+		"Row height limit cap (default 50). Enter/Space cycles · Press 'e' to edit custom max rows.",
 	binaryPath:
-		"Absolute path to chafa binary (leave empty to discover on system PATH).",
+		"Chafa binary executable. Enter/Space toggles auto/path · Press 'e' to edit custom path.",
 	runtimeStatus:
 		"Inspect detected image protocols, host showImages setting, and chafa version.",
 	done: "Save changes and return to conversation.",
@@ -111,18 +113,21 @@ function parsePositiveInt(value: string): number | undefined {
  * Build SettingItem rows for SettingsList (spec §4.2) with inline cycling values
  * and rich contextual descriptions.
  */
-export function buildSettingItems(config: ChafaConfig): SettingItem[] {
+export function buildSettingItems(
+	config: ChafaConfig,
+	detectedBinary?: string,
+): SettingItem[] {
 	const widthPresets = ["40", "50", "60", "80", "100", "120"];
 	const currentWidthStr = String(config.cellWidth);
 	const widthValues = widthPresets.includes(currentWidthStr)
-		? [...widthPresets, "custom..."]
-		: [currentWidthStr, ...widthPresets, "custom..."];
+		? [...widthPresets]
+		: [currentWidthStr, ...widthPresets];
 
 	const rowPresets = ["25", "35", "50", "75", "100"];
 	const currentRowStr = String(config.maxRows);
 	const rowValues = rowPresets.includes(currentRowStr)
-		? [...rowPresets, "custom..."]
-		: [currentRowStr, ...rowPresets, "custom..."];
+		? [...rowPresets]
+		: [currentRowStr, ...rowPresets];
 
 	const symbolPresets = [
 		"block+border",
@@ -133,8 +138,20 @@ export function buildSettingItems(config: ChafaConfig): SettingItem[] {
 		"all",
 	];
 	const symbolValues = symbolPresets.includes(config.symbolsSet)
-		? [...symbolPresets, "custom..."]
-		: [config.symbolsSet, ...symbolPresets, "custom..."];
+		? [...symbolPresets]
+		: [config.symbolsSet, ...symbolPresets];
+
+	const binaryValues: string[] = ["(auto on PATH)"];
+	if (detectedBinary && detectedBinary !== "(auto on PATH)") {
+		binaryValues.push(detectedBinary);
+	}
+	if (
+		config.binaryPath &&
+		config.binaryPath !== detectedBinary &&
+		config.binaryPath !== "(auto on PATH)"
+	) {
+		binaryValues.push(config.binaryPath);
+	}
 
 	return [
 		{
@@ -184,6 +201,7 @@ export function buildSettingItems(config: ChafaConfig): SettingItem[] {
 			label: "Binary path",
 			description: SETTING_DESCRIPTIONS.binaryPath,
 			currentValue: config.binaryPath ?? "(auto on PATH)",
+			values: binaryValues,
 		},
 		{
 			id: "runtimeStatus",
@@ -272,7 +290,11 @@ export function applyMenuChange(
 		case "Set chafa binary path":
 		case "binaryPath": {
 			const trimmed = value.trim();
-			return { ...current, binaryPath: trimmed === "" ? null : trimmed };
+			return {
+				...current,
+				binaryPath:
+					trimmed === "" || trimmed === "(auto on PATH)" ? null : trimmed,
+			};
 		}
 		default:
 			return null;
@@ -311,11 +333,13 @@ export async function runImagesCommand(
 	const ui = ctx.ui;
 	const agentDir = getConfigDir();
 	let config = loadConfig(agentDir);
+	const systemChafa = await probeToFact(null);
+	const detectedBinary = systemChafa.present ? systemChafa.binary : undefined;
 
 	// Primary interactive TUI interface: SettingsList with inline cycling & descriptions
 	if (typeof ui.custom === "function") {
 		for (;;) {
-			const items = buildSettingItems(config);
+			const items = buildSettingItems(config, detectedBinary);
 			let currentIndex = 0;
 
 			const result = await ui.custom<WizardAction>((tui, theme, _kb, done) => {
@@ -324,10 +348,6 @@ export async function runImagesCommand(
 					Math.min(items.length + 2, 12),
 					createSettingsTheme(theme),
 					(id, newValue) => {
-						if (newValue === "custom...") {
-							done({ action: "input", id });
-							return;
-						}
 						const next = applyMenuChange(config, id, newValue);
 						if (next) {
 							config = next;
@@ -347,9 +367,9 @@ export async function runImagesCommand(
 						theme && typeof theme.fg === "function"
 							? theme.fg(
 									"dim",
-									"  ↑/↓ navigate · Enter/Space cycle inline · Esc close",
+									"  ↑/↓ navigate · Enter/Space cycle · 'e' edit custom · Esc close",
 								)
-							: "  ↑/↓ navigate · Enter/Space cycle inline · Esc close",
+							: "  ↑/↓ navigate · Enter/Space cycle · 'e' edit custom · Esc close",
 						0,
 						0,
 					),
@@ -388,10 +408,19 @@ export async function runImagesCommand(
 								done({ action: "status" });
 								return;
 							}
-							if (currentItem.id === "binaryPath") {
-								done({ action: "input", id: "binaryPath" });
-								return;
-							}
+						}
+
+						// Press 'e' or 'E' to edit editable fields
+						if (
+							(data === "e" || data === "E") &&
+							currentItem &&
+							(currentItem.id === "binaryPath" ||
+								currentItem.id === "cellWidth" ||
+								currentItem.id === "maxRows" ||
+								currentItem.id === "symbolsSet")
+						) {
+							done({ action: "input", id: currentItem.id });
+							return;
 						}
 
 						list.handleInput(data);
@@ -505,7 +534,7 @@ export async function runImagesCommand(
 
 	// Fallback interface when ui.custom is not available: ui.select with descriptions & sub-selects
 	for (;;) {
-		const items = buildSettingItems(config);
+		const items = buildSettingItems(config, detectedBinary);
 		const options = items.map((item) => {
 			if (item.id === "done" || item.id === "runtimeStatus") {
 				return `${item.label} — ${item.description}`;
@@ -574,26 +603,9 @@ export async function runImagesCommand(
 				"ascii",
 				"braille",
 				"all",
-				"Custom...",
 			];
 			const picked = await ui.select("Select symbols set", symbolPresets);
-			if (picked === "Custom...") {
-				const val = await ui.input(
-					"Enter custom symbols set",
-					"class list, e.g. block+border",
-				);
-				if (val) {
-					const next = applyMenuChange(config, "symbolsSet", val);
-					if (next) {
-						config = next;
-						writeConfigFile(agentDir, config);
-						ui.notify(
-							`pi-chafa: saved symbolsSet = ${config.symbolsSet}`,
-							"info",
-						);
-					}
-				}
-			} else if (picked) {
+			if (picked) {
 				const next = applyMenuChange(config, "symbolsSet", picked);
 				if (next) {
 					config = next;
@@ -659,21 +671,47 @@ export async function runImagesCommand(
 		}
 
 		if (choice.startsWith("Binary path")) {
-			const val = await ui.input(
-				"Chafa binary path",
-				"absolute path, or empty to clear",
-			);
-			if (val !== undefined) {
-				const next = applyMenuChange(config, "binaryPath", val);
+			const binaryChoices = [
+				"Auto (system PATH)",
+				...(detectedBinary ? [`Detected: ${detectedBinary}`] : []),
+				"Type custom path...",
+			];
+			const picked = await ui.select("Chafa binary path", binaryChoices);
+			if (picked === "Type custom path...") {
+				const val = await ui.input(
+					"Chafa binary path",
+					"absolute path, or empty to clear",
+				);
+				if (val !== undefined) {
+					const next = applyMenuChange(config, "binaryPath", val);
+					if (next) {
+						config = next;
+						writeConfigFile(agentDir, config);
+						ui.notify(
+							config.binaryPath
+								? `pi-chafa: saved binaryPath = ${config.binaryPath}`
+								: "pi-chafa: cleared binaryPath (using system PATH)",
+							"info",
+						);
+					}
+				}
+			} else if (picked?.startsWith("Detected:")) {
+				const pathOnly = picked.replace("Detected: ", "").trim();
+				const next = applyMenuChange(config, "binaryPath", pathOnly);
 				if (next) {
 					config = next;
 					writeConfigFile(agentDir, config);
 					ui.notify(
-						config.binaryPath
-							? `pi-chafa: saved binaryPath = ${config.binaryPath}`
-							: "pi-chafa: cleared binaryPath (using system PATH)",
+						`pi-chafa: saved binaryPath = ${config.binaryPath}`,
 						"info",
 					);
+				}
+			} else if (picked === "Auto (system PATH)") {
+				const next = applyMenuChange(config, "binaryPath", "");
+				if (next) {
+					config = next;
+					writeConfigFile(agentDir, config);
+					ui.notify("pi-chafa: cleared binaryPath (using system PATH)", "info");
 				}
 			}
 		}

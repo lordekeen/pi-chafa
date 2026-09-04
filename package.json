@@ -31,6 +31,7 @@
     "@earendil-works/pi-tui": "*"
   },
   "pi": {
-    "extensions": ["./dist/index.js"]
+    "extensions": ["./dist/index.js"],
+    "skills": ["./skills"]
   }
 }

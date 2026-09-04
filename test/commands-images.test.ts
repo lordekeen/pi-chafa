@@ -92,20 +92,21 @@ describe("buildSettingItems", () => {
 		const symbolsItem = items.find((i) => i.id === "symbolsSet")!;
 		expect(symbolsItem.currentValue).toBe("ascii");
 		expect(symbolsItem.values).toContain("ascii");
-		expect(symbolsItem.values).toContain("custom...");
+		expect(symbolsItem.values).not.toContain("custom...");
 
 		const cellWidthItem = items.find((i) => i.id === "cellWidth")!;
 		expect(cellWidthItem.currentValue).toBe("80");
 		expect(cellWidthItem.values).toContain("80");
-		expect(cellWidthItem.values).toContain("custom...");
+		expect(cellWidthItem.values).not.toContain("custom...");
 
 		const maxRowsItem = items.find((i) => i.id === "maxRows")!;
 		expect(maxRowsItem.currentValue).toBe("75");
 		expect(maxRowsItem.values).toContain("75");
+		expect(maxRowsItem.values).not.toContain("custom...");
 
 		const binaryItem = items.find((i) => i.id === "binaryPath")!;
 		expect(binaryItem.currentValue).toBe("/usr/bin/chafa");
-		expect(binaryItem.values).toBeUndefined();
+		expect(binaryItem.values).toEqual(["(auto on PATH)", "/usr/bin/chafa"]);
 	});
 
 	it("prepends custom numeric and symbol values when not in preset list", () => {
@@ -212,6 +213,7 @@ describe("applyMenuChange", () => {
 			"/usr/bin/chafa",
 		);
 		expect(applyMenuChange(base, "Set chafa binary path", "")!.binaryPath).toBeNull();
+		expect(applyMenuChange(base, "binaryPath", "(auto on PATH)")!.binaryPath).toBeNull();
 		expect(applyMenuChange(base, "binaryPath", "   ")!.binaryPath).toBeNull();
 	});
 
@@ -347,5 +349,70 @@ describe("runImagesCommand", () => {
 		const rendered = componentCreated?.render(80);
 		expect(rendered?.join("\n")).toContain("pi-chafa Settings");
 	});
+
+	it("supports custom typing modal when action input is triggered in TUI mode", async () => {
+		const pi = { getAllTools: () => [] };
+		const notifyMock = vi.fn();
+		const inputMock = vi.fn().mockResolvedValue("/custom/chafa");
+
+		let invocation = 0;
+		const customMock = vi.fn().mockImplementation(async (cb) => {
+			invocation++;
+			const tui = { requestRender: vi.fn() };
+			const theme = {
+				fg: (_c: string, text: string) => text,
+				bold: (text: string) => text,
+			};
+			cb(tui, theme, {}, () => {});
+			if (invocation === 1) {
+				return { action: "input", id: "binaryPath" };
+			}
+			return { action: "done" };
+		});
+
+		const ctx = {
+			ui: {
+				custom: customMock,
+				select: vi.fn(),
+				notify: notifyMock,
+				input: inputMock,
+			},
+		};
+
+		await runImagesCommand(pi as never, "", ctx as never);
+
+		expect(inputMock).toHaveBeenCalledWith(
+			"Chafa binary path",
+			expect.any(String),
+		);
+		const cfg = loadConfig(testDir);
+		expect(cfg.binaryPath).toBe("/custom/chafa");
+	});
+
+	it("handles structured binary path choices in fallback mode", async () => {
+		const pi = { getAllTools: () => [] };
+		const notifyMock = vi.fn();
+		const selectMock = vi
+			.fn()
+			.mockResolvedValueOnce("Binary path: [(auto on PATH)] — " + SETTING_DESCRIPTIONS.binaryPath)
+			.mockResolvedValueOnce("Auto (system PATH)")
+			.mockResolvedValueOnce(`Done — ${SETTING_DESCRIPTIONS.done}`);
+
+		const ctx = {
+			ui: {
+				select: selectMock,
+				notify: notifyMock,
+				input: vi.fn(),
+			},
+		};
+
+		await runImagesCommand(pi as never, "", ctx as never);
+
+		expect(notifyMock).toHaveBeenCalledWith(
+			expect.stringContaining("cleared binaryPath"),
+			"info",
+		);
+	});
 });
+
 
