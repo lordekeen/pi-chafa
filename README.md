@@ -21,7 +21,13 @@ The bundled `pi-chafa` skill is auto-discovered from the package `skills/` direc
 
 ## First use
 
-Ask the agent to show an image: "show me docs/plot.png" — the agent calls the `show_image` tool. Or run `/images` to tune defaults and inspect the runtime environment (detected protocol, host `showImages`, pi-pretty read override, chafa version).
+Ask the agent to show an image: "show me docs/plot.png" — the agent calls the `show_image` tool. 
+
+Run `/images` to tune defaults and inspect the runtime environment (detected protocol, host `showImages`, pi-pretty read override, chafa version):
+- <kbd>↑</kbd> / <kbd>↓</kbd> — Navigate settings
+- <kbd>Enter</kbd> / <kbd>Space</kbd> — Cycle through presets inline
+- <kbd>e</kbd> — Open modal to type a custom value
+- <kbd>Esc</kbd> / <kbd>q</kbd> — Save changes and close
 
 ## Terminal matrix
 
@@ -32,6 +38,24 @@ Ask the agent to show an image: "show me docs/plot.png" — the agent calls the 
 | anything else (null protocol) | Chafa symbols |
 
 On kitty, non-PNG images returned natively rely on pi's built-in PNG conversion; if conversion is unavailable those mimes are skipped by the host — use `format: "symbols"` there.
+
+### Terminals with Kitty Graphics support (e.g. Konsole)
+
+`pi` automatically detects Kitty graphics for `kitty`, `ghostty`, `wezterm`, and `warp`. Other terminals that support the Kitty graphics protocol (such as **Konsole 22.04+**) default to symbols unless you explicitly tell `pi` that Kitty graphics are supported:
+
+1. **Environment variable** (in your shell profile):
+   ```bash
+   export PI_IMAGE_PROTOCOL=kitty
+   ```
+2. **Or in `~/.pi/agent/settings.json`**:
+   ```json
+   {
+     "terminal": {
+       "images": "kitty"
+     }
+   }
+   ```
+   *(Note: Use `"terminal": { "images": "kitty" }`. Do not use `"terminalCapabilityOverrides"`, which is an internal method name in pi).*
 
 ## Config file — `~/.pi/agent/pi-chafa.json`
 
@@ -81,6 +105,7 @@ pi's own `terminal.showImages` / `terminal.imageWidthCells` / `terminal.images` 
 - **Missing chafa** → install it (above) or set `CHAFA_BIN`.
 - **Blank / wrong-color symbols** on a non-truecolor terminal → set `colors` to `16` or `8`.
 - **Kitty shows a caption but no image for a JPEG/GIF/WebP** → host PNG conversion limitation; pass `format: "symbols"`.
+- **Terminal supports Kitty graphics (e.g. Konsole) but renders ANSI symbols** → pi's auto-detection only recognizes `kitty`, `ghostty`, `wezterm`, and `warp`. Override via `export PI_IMAGE_PROTOCOL=kitty` or set `"terminal": { "images": "kitty" }` in `~/.pi/agent/settings.json`.
 
 ## License
 
