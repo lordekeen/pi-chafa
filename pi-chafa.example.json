@@ -1,0 +1,24 @@
+{
+  "_docs": {
+    "version": "Config schema version (integer, default 1). Future pi-chafa versions may migrate on this.",
+    "preferNative": "Delivery preference. true: native kitty/iTerm2 whenever supported. false: force Chafa symbols even on native terminals.",
+    "cellWidth": "Chafa output width in columns (positive integer). Default 60; matches pi terminal.imageWidthCells.",
+    "maxRows": "Absolute cap on symbols output rows — the chafa --size height bound (positive integer). Default 50.",
+    "colors": "Chafa --colors mode: none | 2 | 8 | 16 | 240 | 256 | full. Default 240.",
+    "symbolsSet": "Chafa --symbols class list, e.g. block+border or ascii. Default block+border.",
+    "dither": "Chafa --dither: none | ordered | diffusion | noise. Default none.",
+    "formatOrder": "Reserved fallback-chain placeholder. v1 effective value is [\"symbols\"].",
+    "binaryPath": "Optional explicit path to a chafa binary (overrides PATH discovery). null = discover on PATH.",
+    "timeoutMs": "Wall-clock bound per chafa invocation in ms (positive integer). Default 8000."
+  },
+  "version": 1,
+  "preferNative": true,
+  "cellWidth": 60,
+  "maxRows": 50,
+  "colors": "240",
+  "symbolsSet": "block+border",
+  "dither": "none",
+  "formatOrder": ["symbols"],
+  "binaryPath": null,
+  "timeoutMs": 8000
+}
