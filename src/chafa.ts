@@ -186,6 +186,17 @@ export async function runChafa(
 			killed?: boolean;
 			signal?: string;
 		};
+		// A user abort surfaces as an AbortError — Node kills the child with
+		// SIGTERM and rejects with an AbortError when the signal aborts — so it
+		// also matches the `killed`/`SIGTERM` timeout branch below. Distinguish
+		// it and rethrow the ORIGINAL error so callers can classify the abort.
+		if (
+			err.name === "AbortError" ||
+			err.code === "ABORT_ERR" ||
+			opts.signal?.aborted
+		) {
+			throw error;
+		}
 		if (err.killed || err.signal === "SIGTERM") {
 			throw new Error(
 				`chafa timed out after ${opts.timeoutMs}ms. Reduce the image size, lower cellWidth/maxRows, or raise timeoutMs in pi-chafa config.`,

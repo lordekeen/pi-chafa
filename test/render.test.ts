@@ -77,4 +77,8 @@ describe("renderCall (spec §4.1 registration table: compact 'Show Image <target
 		const component = renderShowCall({ glob: "screenshots/*.png" });
 		expect(rendered(component)).toBe("Show Image screenshots/*.png");
 	});
+	it("strips control characters from a path target", () => {
+		const component = renderShowCall({ path: "/tmp/pic\u001b[31m.png" });
+		expect(rendered(component)).toBe("Show Image /tmp/pic.png");
+	});
 });

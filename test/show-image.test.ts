@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { cleanSymbolsPayload } from "../src/chafa.js";
 import { DEFAULT_CONFIG } from "../src/config.js";
-import { buildShowImageTool, summaryText } from "../src/show-image.js";
+import { buildShowImageTool, summaryText, type ShowImageDeps } from "../src/show-image.js";
 import type {
 	AgentCapsImages,
 	ChafaOverrides,
@@ -56,6 +56,7 @@ function makeTool(overrides: {
 	hasUI?: boolean;
 	runStdout?: string;
 	probeChafa?: () => Promise<{ binary: string; version: { major: number; minor: number } }>;
+	runChafa?: ShowImageDeps["runChafa"];
 } = {}) {
 	const capsImages = overrides.capsImages === undefined ? "kitty" : overrides.capsImages;
 	const showImages = overrides.showImages ?? true;
@@ -77,7 +78,7 @@ function makeTool(overrides: {
 		sniffMime: () => "image/png",
 		probeChafa:
 			overrides.probeChafa ?? (async () => ({ binary: "/usr/bin/chafa", version: { major: 1, minor: 18 } })),
-		runChafa: async () => overrides.runStdout ?? RAW_ART,
+		runChafa: overrides.runChafa ?? (async () => overrides.runStdout ?? RAW_ART),
 		// Real cleaner: RAW_ART (cursor toggles wrapped) must become CLEAN_ART.
 		cleanPayload: cleanSymbolsPayload,
 	});
@@ -120,6 +121,14 @@ describe("summaryText (locked wording, open question 5)", () => {
 		expect(summaryText(files, "symbols")).toBe(
 			"Showed 2 image(s) to the user as ANSI art. 1 file(s) could not be shown.",
 		);
+	});
+	it("strips control characters from a path in the summary", () => {
+		const files: ShowImageFile[] = [
+			{ path: `${dir}/pic\u001b[31m.png`, ok: true, mode: "symbols" },
+		];
+		const text = summaryText(files, "symbols");
+		expect(text).not.toContain("\u001b");
+		expect(text).toBe("Showed image pic.png to the user as ANSI art.");
 	});
 });
 
@@ -171,6 +180,25 @@ describe("show_image execute — symbols path", () => {
 		await expect(tool.execute("t4", { path: "pic.png" }, neverAbort(), noop as never, ctx)).rejects.toThrow(
 			/not found on PATH/,
 		);
+	});
+	it("propagates an abort from runChafa as an abort, not a timeout or per-file failure", async () => {
+		const controller = new AbortController();
+		const { tool, ctx } = makeTool({
+			capsImages: null,
+			runChafa: async () => {
+				controller.abort();
+				const err = new Error("The operation was aborted") as Error & { code?: string };
+				err.name = "AbortError";
+				err.code = "ABORT_ERR";
+				throw err;
+			},
+		});
+		await expect(
+			tool.execute("t10", { path: "pic.png" }, controller.signal, noop as never, ctx),
+		).rejects.toThrow(/aborted/);
+		await expect(
+			tool.execute("t10", { path: "pic.png" }, controller.signal, noop as never, ctx),
+		).rejects.not.toThrow(/timed out/);
 	});
 });
 

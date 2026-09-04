@@ -123,4 +123,18 @@ describe("runChafa", () => {
 			runChafa("/bin/chafa", ["big.png"], { timeoutMs: 250 }, mockExec as never),
 		).rejects.toThrow(/cellWidth/);
 	});
+	it("rethrows a user abort distinctly (not as a timeout)", async () => {
+		const mockExec = vi.fn(async () => {
+			const err = new Error("The operation was aborted") as Error & { code?: string };
+			err.name = "AbortError";
+			err.code = "ABORT_ERR";
+			throw err;
+		});
+		await expect(
+			runChafa("/bin/chafa", ["big.png"], { timeoutMs: 250 }, mockExec as never),
+		).rejects.toThrow("The operation was aborted");
+		await expect(
+			runChafa("/bin/chafa", ["big.png"], { timeoutMs: 250 }, mockExec as never),
+		).rejects.not.toThrow(/timed out/);
+	});
 });

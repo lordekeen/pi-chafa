@@ -73,7 +73,7 @@ pi's own `terminal.showImages` / `terminal.imageWidthCells` / `terminal.images` 
 
 - Animated files show a **still frame** (`--animate off`).
 - Symbols width is not clamped to the live terminal width (config `cellWidth` only).
-- No sixel — see the upstream [pi TUI sixel proposal](docs/spec/2026-09-03-pi-tui-sixel-support-proposal.md) for the protocol roadmap.
+- No sixel — see the upstream pi TUI sixel proposal (docs/spec/2026-09-03-pi-tui-sixel-support-proposal.md) for the protocol roadmap.
 - Not a `read` override; pi-pretty's `read` may be preferable on native terminals (see the bundled skill).
 
 ## Troubleshooting

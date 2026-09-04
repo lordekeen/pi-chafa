@@ -1,6 +1,6 @@
 import { type Dirent, lstatSync, readdirSync } from "node:fs";
 import { readFile } from "node:fs/promises";
-import { dirname, isAbsolute, join, resolve, sep } from "node:path";
+import { isAbsolute, join, resolve, sep } from "node:path";
 
 /** Directories never walked during magic-pattern expansion (documented guard). */
 const PRUNE_DIRS = new Set([".git", "node_modules"]);
@@ -183,9 +183,4 @@ export function sniffMime(bytes: Buffer): string {
 		return "image/webp";
 	}
 	return "application/octet-stream";
-}
-
-/** dirname re-export kept for callers that need the matched file's directory (DRY). */
-export function matchedDir(filePath: string): string {
-	return dirname(filePath);
 }

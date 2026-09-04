@@ -112,6 +112,23 @@ function basenameOf(filePath: string): string {
 	return normalized.slice(normalized.lastIndexOf("/") + 1);
 }
 
+// Strip control characters and ANSI escape sequences from path-derived strings
+// before they reach Text/content text (terminal-injection guard). A filename or
+// path arg carrying an ESC (or other C0/DEL byte) must never reach the terminal
+// verbatim. Built via `new RegExp` from string constants for the same reason as
+// the cleaner regexes in chafa.ts: the committed biome gate flags
+// control-character escapes inside regex literals
+// (lint/suspicious/noControlCharactersInRegex), and its --fix would inline a
+// `new RegExp(<static string>)` back into a literal.
+const ESC = "\x1b";
+const CONTROL_CHARS = "[\x00-\x1f\x7f]";
+const CONTROL_RE = new RegExp(CONTROL_CHARS, "g");
+const CSI_RE = new RegExp(`${ESC}\\[[0-9;?]*[ -/]*[@-~]`, "g");
+
+function stripControls(s: string): string {
+	return s.replace(CSI_RE, "").replace(CONTROL_RE, "");
+}
+
 /** Effective-settings snapshot recorded in details for renderers/transcript (spec §7.1 steps 2/5). */
 function settingsRecord(
 	resolved: ResolvedConfig,
@@ -136,19 +153,20 @@ export function summaryText(
 	const shown = files.filter((file) => file.ok);
 	const failed = files.length - shown.length;
 	const firstPath = (shown[0] ?? files[0])?.path ?? "";
+	const name = stripControls(basenameOf(firstPath));
 	const label =
 		mode === "native" ? "via terminal-native rendering" : "as ANSI art";
 
 	if (mode === "none") {
 		const head =
 			files.length <= 1
-				? `Showed image ${basenameOf(firstPath)} to the user`
+				? `Showed image ${name} to the user`
 				: `Showed ${files.length} image(s) to the user`;
 		return `${head} [image display unavailable in this session].`;
 	}
 	const head =
 		files.length <= 1
-			? `Showed image ${basenameOf(firstPath)} to the user ${label}`
+			? `Showed image ${name} to the user ${label}`
 			: `Showed ${files.length} image(s) to the user ${label}`;
 	const tail = failed > 0 ? ` ${failed} file(s) could not be shown.` : "";
 	return `${head}.${tail}`;
@@ -177,7 +195,7 @@ export function displayText(
 
 /** renderCall: compact "Show Image <target>" (spec §4.1 registration table). */
 export function renderShowCall(args: ShowImageParams): Text {
-	const target = (args.path ?? args.glob ?? "").trim();
+	const target = stripControls((args.path ?? args.glob ?? "").trim());
 	return new Text(`Show Image ${target}`, 0, 0);
 }
 
@@ -310,7 +328,7 @@ export function buildShowImageTool(
 						content: [
 							{
 								type: "text",
-								text: `Rendering image ${progress} of ${matched.length}: ${basenameOf(filePath)}…`,
+								text: `Rendering image ${progress} of ${matched.length}: ${stripControls(basenameOf(filePath))}…`,
 							},
 						],
 						details: {
@@ -354,6 +372,11 @@ export function buildShowImageTool(
 						payloads.push(payload);
 					}
 				} catch (error) {
+					// A user abort surfaces mid-run (chafa's AbortError); propagate
+					// it instead of recording a misleading per-file failure.
+					if (signal?.aborted) {
+						throw new Error("show_image was aborted");
+					}
 					// Per-file failure: record and continue (spec §8, mixed results).
 					files.push({
 						path: filePath,
