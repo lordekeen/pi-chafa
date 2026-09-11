@@ -43,7 +43,7 @@ Provide a universal image viewing capability for the [pi](https://pi.dev) coding
 ### 3.1 Target Resolution & File Handling ([`src/images.ts`](src/images.ts))
 1. **Argument Parsing:** Accepts either `path` (single target) or `glob` (multi-file match).
 2. **Glob Translation:** Custom glob-to-regex translator supporting `*`, `?`, and recursive `**` directories matching zero-or-more segments in any position.
-3. **MIME Sniffing:** Inspects the first 16 bytes against magic number signatures (PNG, JPEG, GIF87a/89a, WebP, BMP, TIFF, SVG) to guarantee accurate content types without relying solely on file extensions.
+3. **MIME Sniffing:** Inspects the first 16 bytes against magic number signatures for PNG, JPEG, GIF87a/89a, and WebP only (spec §7.4), to guarantee accurate content types without relying solely on file extensions. SVG is not magic-byte-sniffable (it is XML text), so it is not detectable this way at all.
 
 ### 3.2 Delivery Mode Decision Matrix ([`src/detect.ts`](src/detect.ts))
 Determines whether each target is rendered natively, converted to symbols, or degraded:
@@ -53,7 +53,8 @@ Determines whether each target is rendered natively, converted to symbols, or de
 | `kitty` or `iterm2` | `true` | `auto` (with `preferNative: true`) | `native` |
 | `kitty` or `iterm2` | `true` | `preferNative: false` OR format=`symbols` | `symbols` |
 | `null` (plain terminal / tmux) | any | `auto` or `symbols` | `symbols` |
-| any | `false` | `native` (explicitly forced) | Error (`format=native unavailable`) |
+| `kitty` or `iterm2` | `false` | `native` (explicitly forced) | `symbols` (Chafa), with a note that a forced native delivery was degraded |
+| `null` (not native-capable) | any | `native` (explicitly forced) | Error (`format=native unavailable`) |
 | No UI / Headless (`ctx.hasUI === false`) | any | any | `none` (safe text degrade) |
 
 ### 3.3 Chafa Subprocess Engine ([`src/chafa.ts`](src/chafa.ts))
