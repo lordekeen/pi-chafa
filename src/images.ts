@@ -169,16 +169,7 @@ export function sniffMime(bytes: Buffer): string {
 	) {
 		return "image/jpeg";
 	}
-	if (
-		bytes.length >= 6 &&
-		bytes.subarray(0, 6).toString("ascii") === "GIF87a"
-	) {
-		return "image/gif";
-	}
-	if (
-		bytes.length >= 6 &&
-		bytes.subarray(0, 6).toString("ascii") === "GIF89a"
-	) {
+	if (bytes.length >= 6 && bytes.subarray(0, 4).toString("ascii") === "GIF8") {
 		return "image/gif";
 	}
 	if (

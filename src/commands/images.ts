@@ -1,6 +1,7 @@
 import type {
 	ExtensionAPI,
 	ExtensionCommandContext,
+	ExtensionUIContext,
 	ThemeColor,
 } from "@earendil-works/pi-coding-agent";
 import {
@@ -22,6 +23,7 @@ import {
 	readHostImageSettings,
 	writeConfigFile,
 } from "../config.js";
+import { resolveCapsImages } from "../detect.js";
 import {
 	type AgentCapsImages,
 	type ChafaConfig,
@@ -31,17 +33,25 @@ import {
 	type DitherMode,
 } from "../types.js";
 
-export const MENU = [
-	"Change cellWidth",
-	"Change colors",
-	"Change symbols set",
-	"Change dither",
-	"Change maxRows",
-	"Toggle preferNative",
-	"Set chafa binary path",
-	"Runtime status",
-	"Done",
-] as const;
+/** Preset ladders shared by the SettingsList item builder and the fallback flow. */
+const WIDTH_PRESETS: string[] = ["40", "50", "60", "80", "100", "120"];
+const ROW_PRESETS: string[] = ["25", "35", "50", "75", "100"];
+const SYMBOL_PRESETS: string[] = [
+	"block+border",
+	"block",
+	"border",
+	"ascii",
+	"braille",
+	"all",
+];
+const TIMEOUT_PRESETS: string[] = [
+	"2000",
+	"4000",
+	"8000",
+	"15000",
+	"30000",
+	"60000",
+];
 
 export const SETTING_DESCRIPTIONS = {
 	preferNative:
@@ -55,6 +65,8 @@ export const SETTING_DESCRIPTIONS = {
 		"Width in terminal columns (default 60). Enter/Space cycles · Press 'e' to edit custom width.",
 	maxRows:
 		"Row height limit cap (default 50). Enter/Space cycles · Press 'e' to edit custom max rows.",
+	timeoutMs:
+		"Per-invocation chafa wall-clock limit in ms (default 8000). Enter/Space cycles · Press 'e' to edit custom timeout.",
 	binaryPath:
 		"Chafa binary executable. Enter/Space toggles auto/path · Press 'e' to edit custom path.",
 	runtimeStatus:
@@ -62,13 +74,46 @@ export const SETTING_DESCRIPTIONS = {
 	done: "Save changes and return to conversation.",
 } as const;
 
+/** Which source supplied the effective image capability (spec §6.4 ladder). */
+export type CapsImagesSource =
+	| "getCapabilities()"
+	| "terminal.images"
+	| "PI_IMAGE_PROTOCOL"
+	| "none";
+
+export interface RuntimeCaps {
+	capsImages: AgentCapsImages;
+	capsSource: CapsImagesSource;
+}
+
 export interface RuntimeFacts {
 	capsImages: AgentCapsImages;
+	capsSource: CapsImagesSource;
 	showImages: boolean;
 	prettyRead: boolean;
 	chafa:
 		| { present: true; binary: string; version: string }
 		| { present: false; error: string };
+}
+
+/**
+ * Resolve the effective native-image capability with the same exported ladder
+ * show_image uses (§6.4: getCapabilities() → host terminal.images →
+ * PI_IMAGE_PROTOCOL), plus the provenance of whichever source won. The panel
+ * is diagnostic: the raw caps singleton can read `null` while native delivery
+ * still works via a host setting or the env var.
+ */
+export function resolveRuntimeCaps(
+	hostCaps: AgentCapsImages,
+	hostImages: AgentCapsImages,
+	envProtocol: string | undefined,
+): RuntimeCaps {
+	const capsImages = resolveCapsImages(hostCaps, hostImages, envProtocol);
+	if (capsImages === null) return { capsImages: null, capsSource: "none" };
+	if (hostCaps !== null) return { capsImages, capsSource: "getCapabilities()" };
+	if (resolveCapsImages(null, hostImages, undefined) !== null)
+		return { capsImages, capsSource: "terminal.images" };
+	return { capsImages, capsSource: "PI_IMAGE_PROTOCOL" };
 }
 
 /**
@@ -78,26 +123,28 @@ export interface RuntimeFacts {
  */
 export function collectRuntimeFacts(
 	pi: Pick<ExtensionAPI, "getAllTools">,
-	capsImages: AgentCapsImages,
+	caps: RuntimeCaps,
 	showImages: boolean,
 	chafa: RuntimeFacts["chafa"],
 ): RuntimeFacts {
 	const readTool = pi.getAllTools().find((tool) => tool.name === "read");
 	const prettyRead =
 		readTool !== undefined && readTool.sourceInfo.source !== "builtin";
-	return { capsImages, showImages, prettyRead, chafa };
+	return { ...caps, showImages, prettyRead, chafa };
 }
 
 /** Pure status lines for the /images informational section (spec §4.2). */
 export function describeRuntime(facts: RuntimeFacts): string[] {
 	const protocol = facts.capsImages ?? "none";
+	const source =
+		facts.capsSource === "none" ? "" : ` (source: ${facts.capsSource})`;
 	const show = facts.showImages ? "on" : "off";
 	const pretty = facts.prettyRead ? "detected" : "not detected";
 	const chafa = facts.chafa.present
 		? `${facts.chafa.version} (${facts.chafa.binary})`
 		: `NOT FOUND — ${facts.chafa.error}`;
 	return [
-		`Detected image protocol: ${protocol}`,
+		`Detected image protocol: ${protocol}${source}`,
 		`Host showImages: ${show}`,
 		`pi-pretty-style read override: ${pretty}`,
 		`chafa: ${chafa}`,
@@ -117,29 +164,24 @@ export function buildSettingItems(
 	config: ChafaConfig,
 	detectedBinary?: string,
 ): SettingItem[] {
-	const widthPresets = ["40", "50", "60", "80", "100", "120"];
 	const currentWidthStr = String(config.cellWidth);
-	const widthValues = widthPresets.includes(currentWidthStr)
-		? [...widthPresets]
-		: [currentWidthStr, ...widthPresets];
+	const widthValues = WIDTH_PRESETS.includes(currentWidthStr)
+		? [...WIDTH_PRESETS]
+		: [currentWidthStr, ...WIDTH_PRESETS];
 
-	const rowPresets = ["25", "35", "50", "75", "100"];
 	const currentRowStr = String(config.maxRows);
-	const rowValues = rowPresets.includes(currentRowStr)
-		? [...rowPresets]
-		: [currentRowStr, ...rowPresets];
+	const rowValues = ROW_PRESETS.includes(currentRowStr)
+		? [...ROW_PRESETS]
+		: [currentRowStr, ...ROW_PRESETS];
 
-	const symbolPresets = [
-		"block+border",
-		"block",
-		"border",
-		"ascii",
-		"braille",
-		"all",
-	];
-	const symbolValues = symbolPresets.includes(config.symbolsSet)
-		? [...symbolPresets]
-		: [config.symbolsSet, ...symbolPresets];
+	const currentTimeoutStr = String(config.timeoutMs);
+	const timeoutValues = TIMEOUT_PRESETS.includes(currentTimeoutStr)
+		? [...TIMEOUT_PRESETS]
+		: [currentTimeoutStr, ...TIMEOUT_PRESETS];
+
+	const symbolValues = SYMBOL_PRESETS.includes(config.symbolsSet)
+		? [...SYMBOL_PRESETS]
+		: [config.symbolsSet, ...SYMBOL_PRESETS];
 
 	const binaryValues: string[] = ["(auto on PATH)"];
 	if (detectedBinary && detectedBinary !== "(auto on PATH)") {
@@ -197,6 +239,13 @@ export function buildSettingItems(
 			values: rowValues,
 		},
 		{
+			id: "timeoutMs",
+			label: "Timeout (ms)",
+			description: SETTING_DESCRIPTIONS.timeoutMs,
+			currentValue: currentTimeoutStr,
+			values: timeoutValues,
+		},
+		{
 			id: "binaryPath",
 			label: "Binary path",
 			description: SETTING_DESCRIPTIONS.binaryPath,
@@ -250,35 +299,32 @@ export function applyMenuChange(
 	value: string,
 ): ChafaConfig | null {
 	switch (choice) {
-		case "Change cellWidth":
 		case "cellWidth": {
 			const parsed = parsePositiveInt(value.trim());
 			return parsed === undefined ? null : { ...current, cellWidth: parsed };
 		}
-		case "Change colors":
 		case "colors": {
 			const trimmed = value.trim() as ColorsMode;
 			if (!(COLOR_MODES as readonly string[]).includes(trimmed)) return null;
 			return { ...current, colors: trimmed };
 		}
-		case "Change symbols set":
 		case "symbolsSet": {
 			const trimmed = value.trim();
 			return trimmed === "" ? null : { ...current, symbolsSet: trimmed };
 		}
-		case "Change dither":
 		case "dither": {
 			const trimmed = value.trim() as DitherMode;
 			if (!(DITHER_MODES as readonly string[]).includes(trimmed)) return null;
 			return { ...current, dither: trimmed };
 		}
-		case "Change maxRows":
 		case "maxRows": {
 			const parsed = parsePositiveInt(value.trim());
 			return parsed === undefined ? null : { ...current, maxRows: parsed };
 		}
-		case "Toggle preferNative":
-			return { ...current, preferNative: !current.preferNative };
+		case "timeoutMs": {
+			const parsed = parsePositiveInt(value.trim());
+			return parsed === undefined ? null : { ...current, timeoutMs: parsed };
+		}
 		case "preferNative": {
 			const trimmed = value.trim().toLowerCase();
 			if (trimmed === "true") return { ...current, preferNative: true };
@@ -287,7 +333,6 @@ export function applyMenuChange(
 				return { ...current, preferNative: !current.preferNative };
 			return null;
 		}
-		case "Set chafa binary path":
 		case "binaryPath": {
 			const trimmed = value.trim();
 			return {
@@ -314,6 +359,53 @@ async function probeToFact(
 	} catch (error) {
 		return { present: false, error: (error as Error).message };
 	}
+}
+
+/**
+ * Apply one menu choice, persist it, and emit the caller's notification
+ * (spec §4.2). Returns the updated config, or null when the value was invalid
+ * (callers warn / re-prompt). Message text is supplied by the caller so every
+ * notification stays byte-identical to the hand-written flow it replaces.
+ */
+function persistSetting(
+	config: ChafaConfig,
+	agentDir: string,
+	ui: Pick<ExtensionUIContext, "notify">,
+	id: string,
+	value: string,
+	message: (next: ChafaConfig) => string,
+): ChafaConfig | null {
+	const next = applyMenuChange(config, id, value);
+	if (!next) return null;
+	writeConfigFile(agentDir, next);
+	ui.notify(message(next), "info");
+	return next;
+}
+
+/** `persistSetting` message for the binaryPath field (set or cleared). */
+function binaryPathMessage(next: ChafaConfig): string {
+	return next.binaryPath
+		? `pi-chafa: saved binaryPath = ${next.binaryPath}`
+		: "pi-chafa: cleared binaryPath (using system PATH)";
+}
+
+/**
+ * Effective capability + provenance from the §6.4 ladder, host showImages
+ * flag, pretty-read detection, and a live chafa probe (spec §4.2).
+ */
+async function buildRuntimeFacts(
+	pi: Pick<ExtensionAPI, "getAllTools">,
+	config: ChafaConfig,
+	agentDir: string,
+): Promise<RuntimeFacts> {
+	const hostImages = readHostImageSettings(agentDir);
+	const caps = resolveRuntimeCaps(
+		getCapabilities().images,
+		hostImages.images,
+		process.env.PI_IMAGE_PROTOCOL,
+	);
+	const chafa = await probeToFact(config.binaryPath);
+	return collectRuntimeFacts(pi, caps, hostImages.showImages, chafa);
 }
 
 type WizardAction =
@@ -348,11 +440,16 @@ export async function runImagesCommand(
 					Math.min(items.length + 2, 12),
 					createSettingsTheme(theme),
 					(id, newValue) => {
-						const next = applyMenuChange(config, id, newValue);
+						const next = persistSetting(
+							config,
+							agentDir,
+							ui,
+							id,
+							newValue,
+							() => `pi-chafa: ${id} updated to ${newValue}`,
+						);
 						if (next) {
 							config = next;
-							writeConfigFile(agentDir, config);
-							ui.notify(`pi-chafa: ${id} updated to ${newValue}`, "info");
 							tui.requestRender();
 						}
 					},
@@ -417,6 +514,7 @@ export async function runImagesCommand(
 							(currentItem.id === "binaryPath" ||
 								currentItem.id === "cellWidth" ||
 								currentItem.id === "maxRows" ||
+								currentItem.id === "timeoutMs" ||
 								currentItem.id === "symbolsSet")
 						) {
 							done({ action: "input", id: currentItem.id });
@@ -434,14 +532,7 @@ export async function runImagesCommand(
 			}
 
 			if (result.action === "status") {
-				const hostImages = readHostImageSettings(agentDir);
-				const chafa = await probeToFact(config.binaryPath);
-				const facts = collectRuntimeFacts(
-					pi,
-					getCapabilities().images,
-					hostImages.showImages,
-					chafa,
-				);
+				const facts = await buildRuntimeFacts(pi, config, agentDir);
 				const options = [...describeRuntime(facts), "Close"];
 				await ui.select("Runtime status (informational)", options);
 				continue;
@@ -455,20 +546,20 @@ export async function runImagesCommand(
 						"integer columns (e.g. 72)",
 					);
 					if (value !== undefined) {
-						const next = applyMenuChange(config, "cellWidth", value);
-						if (next) {
-							config = next;
-							writeConfigFile(agentDir, config);
-							ui.notify(
-								`pi-chafa: saved cellWidth = ${config.cellWidth}`,
-								"info",
-							);
-						} else {
+						const next = persistSetting(
+							config,
+							agentDir,
+							ui,
+							"cellWidth",
+							value,
+							(next) => `pi-chafa: saved cellWidth = ${next.cellWidth}`,
+						);
+						if (next) config = next;
+						else
 							ui.notify(
 								"pi-chafa: invalid cellWidth (must be positive integer)",
 								"warning",
 							);
-						}
 					}
 				} else if (id === "maxRows") {
 					const value = await ui.input(
@@ -476,17 +567,41 @@ export async function runImagesCommand(
 						"integer row cap (e.g. 60)",
 					);
 					if (value !== undefined) {
-						const next = applyMenuChange(config, "maxRows", value);
-						if (next) {
-							config = next;
-							writeConfigFile(agentDir, config);
-							ui.notify(`pi-chafa: saved maxRows = ${config.maxRows}`, "info");
-						} else {
+						const next = persistSetting(
+							config,
+							agentDir,
+							ui,
+							"maxRows",
+							value,
+							(next) => `pi-chafa: saved maxRows = ${next.maxRows}`,
+						);
+						if (next) config = next;
+						else
 							ui.notify(
 								"pi-chafa: invalid maxRows (must be positive integer)",
 								"warning",
 							);
-						}
+					}
+				} else if (id === "timeoutMs") {
+					const value = await ui.input(
+						"New timeoutMs (milliseconds)",
+						"integer milliseconds (e.g. 8000)",
+					);
+					if (value !== undefined) {
+						const next = persistSetting(
+							config,
+							agentDir,
+							ui,
+							"timeoutMs",
+							value,
+							(next) => `pi-chafa: saved timeoutMs = ${next.timeoutMs}`,
+						);
+						if (next) config = next;
+						else
+							ui.notify(
+								"pi-chafa: invalid timeoutMs (must be positive integer)",
+								"warning",
+							);
 					}
 				} else if (id === "symbolsSet") {
 					const value = await ui.input(
@@ -494,20 +609,20 @@ export async function runImagesCommand(
 						"chafa --symbols class list (e.g. block+border)",
 					);
 					if (value !== undefined) {
-						const next = applyMenuChange(config, "symbolsSet", value);
-						if (next) {
-							config = next;
-							writeConfigFile(agentDir, config);
-							ui.notify(
-								`pi-chafa: saved symbolsSet = ${config.symbolsSet}`,
-								"info",
-							);
-						} else {
+						const next = persistSetting(
+							config,
+							agentDir,
+							ui,
+							"symbolsSet",
+							value,
+							(next) => `pi-chafa: saved symbolsSet = ${next.symbolsSet}`,
+						);
+						if (next) config = next;
+						else
 							ui.notify(
 								"pi-chafa: invalid symbolsSet (cannot be empty)",
 								"warning",
 							);
-						}
 					}
 				} else if (id === "binaryPath") {
 					const value = await ui.input(
@@ -515,17 +630,15 @@ export async function runImagesCommand(
 						"absolute path to chafa, or empty to clear",
 					);
 					if (value !== undefined) {
-						const next = applyMenuChange(config, "binaryPath", value);
-						if (next) {
-							config = next;
-							writeConfigFile(agentDir, config);
-							ui.notify(
-								config.binaryPath
-									? `pi-chafa: saved binaryPath = ${config.binaryPath}`
-									: "pi-chafa: cleared binaryPath (using system PATH)",
-								"info",
-							);
-						}
+						const next = persistSetting(
+							config,
+							agentDir,
+							ui,
+							"binaryPath",
+							value,
+							binaryPathMessage,
+						);
+						if (next) config = next;
 					}
 				}
 			}
@@ -546,38 +659,38 @@ export async function runImagesCommand(
 		if (!choice || choice.startsWith("Done")) return;
 
 		if (choice.startsWith("Runtime status")) {
-			const hostImages = readHostImageSettings(agentDir);
-			const chafa = await probeToFact(config.binaryPath);
-			const facts = collectRuntimeFacts(
-				pi,
-				getCapabilities().images,
-				hostImages.showImages,
-				chafa,
-			);
+			const facts = await buildRuntimeFacts(pi, config, agentDir);
 			const statusOptions = [...describeRuntime(facts), "Close"];
 			await ui.select("Runtime status (informational)", statusOptions);
 			continue;
 		}
 
 		if (choice.startsWith("Prefer native")) {
-			config.preferNative = !config.preferNative;
-			writeConfigFile(agentDir, config);
-			ui.notify(
-				`pi-chafa: preferNative is now ${config.preferNative ? "true (native preferred)" : "false (symbols forced)"}`,
-				"info",
+			const next = persistSetting(
+				config,
+				agentDir,
+				ui,
+				"preferNative",
+				"",
+				(next) =>
+					`pi-chafa: preferNative is now ${next.preferNative ? "true (native preferred)" : "false (symbols forced)"}`,
 			);
+			if (next) config = next;
 			continue;
 		}
 
 		if (choice.startsWith("Color mode")) {
 			const picked = await ui.select("Select color mode", [...COLOR_MODES]);
 			if (picked) {
-				const next = applyMenuChange(config, "colors", picked);
-				if (next) {
-					config = next;
-					writeConfigFile(agentDir, config);
-					ui.notify(`pi-chafa: color mode is now ${config.colors}`, "info");
-				}
+				const next = persistSetting(
+					config,
+					agentDir,
+					ui,
+					"colors",
+					picked,
+					(next) => `pi-chafa: color mode is now ${next.colors}`,
+				);
+				if (next) config = next;
 			}
 			continue;
 		}
@@ -585,87 +698,103 @@ export async function runImagesCommand(
 		if (choice.startsWith("Dither mode")) {
 			const picked = await ui.select("Select dither mode", [...DITHER_MODES]);
 			if (picked) {
-				const next = applyMenuChange(config, "dither", picked);
-				if (next) {
-					config = next;
-					writeConfigFile(agentDir, config);
-					ui.notify(`pi-chafa: dither mode is now ${config.dither}`, "info");
-				}
+				const next = persistSetting(
+					config,
+					agentDir,
+					ui,
+					"dither",
+					picked,
+					(next) => `pi-chafa: dither mode is now ${next.dither}`,
+				);
+				if (next) config = next;
 			}
 			continue;
 		}
 
 		if (choice.startsWith("Symbols set")) {
-			const symbolPresets = [
-				"block+border",
-				"block",
-				"border",
-				"ascii",
-				"braille",
-				"all",
-			];
-			const picked = await ui.select("Select symbols set", symbolPresets);
+			const picked = await ui.select("Select symbols set", [...SYMBOL_PRESETS]);
 			if (picked) {
-				const next = applyMenuChange(config, "symbolsSet", picked);
-				if (next) {
-					config = next;
-					writeConfigFile(agentDir, config);
-					ui.notify(`pi-chafa: symbolsSet is now ${config.symbolsSet}`, "info");
-				}
+				const next = persistSetting(
+					config,
+					agentDir,
+					ui,
+					"symbolsSet",
+					picked,
+					(next) => `pi-chafa: symbolsSet is now ${next.symbolsSet}`,
+				);
+				if (next) config = next;
 			}
 			continue;
 		}
 
 		if (choice.startsWith("Cell width")) {
-			const widthPresets = ["40", "50", "60", "80", "100", "120", "Custom..."];
-			const picked = await ui.select(
-				"Select cell width (columns)",
-				widthPresets,
-			);
-			if (picked === "Custom...") {
-				const val = await ui.input(
-					"Enter custom cellWidth",
-					"positive integer",
+			const picked = await ui.select("Select cell width (columns)", [
+				...WIDTH_PRESETS,
+				"Custom...",
+			]);
+			const value =
+				picked === "Custom..."
+					? await ui.input("Enter custom cellWidth", "positive integer")
+					: picked;
+			if (value) {
+				const next = persistSetting(
+					config,
+					agentDir,
+					ui,
+					"cellWidth",
+					value,
+					(next) => `pi-chafa: cellWidth is now ${next.cellWidth}`,
 				);
-				if (val) {
-					const next = applyMenuChange(config, "cellWidth", val);
-					if (next) {
-						config = next;
-						writeConfigFile(agentDir, config);
-						ui.notify(`pi-chafa: cellWidth is now ${config.cellWidth}`, "info");
-					}
-				}
-			} else if (picked) {
-				const next = applyMenuChange(config, "cellWidth", picked);
-				if (next) {
-					config = next;
-					writeConfigFile(agentDir, config);
-					ui.notify(`pi-chafa: cellWidth is now ${config.cellWidth}`, "info");
-				}
+				if (next) config = next;
 			}
 			continue;
 		}
 
 		if (choice.startsWith("Max rows")) {
-			const rowPresets = ["25", "35", "50", "75", "100", "Custom..."];
-			const picked = await ui.select("Select max rows (row cap)", rowPresets);
-			if (picked === "Custom...") {
-				const val = await ui.input("Enter custom maxRows", "positive integer");
-				if (val) {
-					const next = applyMenuChange(config, "maxRows", val);
-					if (next) {
-						config = next;
-						writeConfigFile(agentDir, config);
-						ui.notify(`pi-chafa: maxRows is now ${config.maxRows}`, "info");
-					}
-				}
-			} else if (picked) {
-				const next = applyMenuChange(config, "maxRows", picked);
-				if (next) {
-					config = next;
-					writeConfigFile(agentDir, config);
-					ui.notify(`pi-chafa: maxRows is now ${config.maxRows}`, "info");
-				}
+			const picked = await ui.select("Select max rows (row cap)", [
+				...ROW_PRESETS,
+				"Custom...",
+			]);
+			const value =
+				picked === "Custom..."
+					? await ui.input("Enter custom maxRows", "positive integer")
+					: picked;
+			if (value) {
+				const next = persistSetting(
+					config,
+					agentDir,
+					ui,
+					"maxRows",
+					value,
+					(next) => `pi-chafa: maxRows is now ${next.maxRows}`,
+				);
+				if (next) config = next;
+			}
+			continue;
+		}
+
+		if (choice.startsWith("Timeout")) {
+			const picked = await ui.select("Select timeout (ms)", [
+				...TIMEOUT_PRESETS,
+				"Custom...",
+			]);
+			const value =
+				picked === "Custom..."
+					? await ui.input(
+							"Enter custom timeoutMs (milliseconds)",
+							"positive integer ms",
+						)
+					: picked;
+			if (value) {
+				const next = persistSetting(
+					config,
+					agentDir,
+					ui,
+					"timeoutMs",
+					value,
+					(next) => `pi-chafa: timeoutMs is now ${next.timeoutMs}`,
+				);
+				if (next) config = next;
 			}
 			continue;
 		}
@@ -683,36 +812,37 @@ export async function runImagesCommand(
 					"absolute path, or empty to clear",
 				);
 				if (val !== undefined) {
-					const next = applyMenuChange(config, "binaryPath", val);
-					if (next) {
-						config = next;
-						writeConfigFile(agentDir, config);
-						ui.notify(
-							config.binaryPath
-								? `pi-chafa: saved binaryPath = ${config.binaryPath}`
-								: "pi-chafa: cleared binaryPath (using system PATH)",
-							"info",
-						);
-					}
+					const next = persistSetting(
+						config,
+						agentDir,
+						ui,
+						"binaryPath",
+						val,
+						binaryPathMessage,
+					);
+					if (next) config = next;
 				}
 			} else if (picked?.startsWith("Detected:")) {
 				const pathOnly = picked.replace("Detected: ", "").trim();
-				const next = applyMenuChange(config, "binaryPath", pathOnly);
-				if (next) {
-					config = next;
-					writeConfigFile(agentDir, config);
-					ui.notify(
-						`pi-chafa: saved binaryPath = ${config.binaryPath}`,
-						"info",
-					);
-				}
+				const next = persistSetting(
+					config,
+					agentDir,
+					ui,
+					"binaryPath",
+					pathOnly,
+					binaryPathMessage,
+				);
+				if (next) config = next;
 			} else if (picked === "Auto (system PATH)") {
-				const next = applyMenuChange(config, "binaryPath", "");
-				if (next) {
-					config = next;
-					writeConfigFile(agentDir, config);
-					ui.notify("pi-chafa: cleared binaryPath (using system PATH)", "info");
-				}
+				const next = persistSetting(
+					config,
+					agentDir,
+					ui,
+					"binaryPath",
+					"",
+					binaryPathMessage,
+				);
+				if (next) config = next;
 			}
 		}
 	}

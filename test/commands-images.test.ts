@@ -4,32 +4,16 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DEFAULT_CONFIG, loadConfig } from "../src/config.js";
 import {
-	MENU,
 	SETTING_DESCRIPTIONS,
 	applyMenuChange,
 	buildSettingItems,
 	collectRuntimeFacts,
 	createSettingsTheme,
 	describeRuntime,
+	resolveRuntimeCaps,
 	runImagesCommand,
 } from "../src/commands/images.js";
 import { COLOR_MODES, DITHER_MODES, type ChafaConfig } from "../src/types.js";
-
-describe("MENU", () => {
-	it("covers every persistent config key a user may tune", () => {
-		expect(MENU).toEqual([
-			"Change cellWidth",
-			"Change colors",
-			"Change symbols set",
-			"Change dither",
-			"Change maxRows",
-			"Toggle preferNative",
-			"Set chafa binary path",
-			"Runtime status",
-			"Done",
-		]);
-	});
-});
 
 describe("SETTING_DESCRIPTIONS", () => {
 	it("provides non-empty descriptions for all settings and actions", () => {
@@ -40,6 +24,7 @@ describe("SETTING_DESCRIPTIONS", () => {
 			"symbolsSet",
 			"cellWidth",
 			"maxRows",
+			"timeoutMs",
 			"binaryPath",
 			"runtimeStatus",
 			"done",
@@ -71,6 +56,7 @@ describe("buildSettingItems", () => {
 			"symbolsSet",
 			"cellWidth",
 			"maxRows",
+			"timeoutMs",
 			"binaryPath",
 			"runtimeStatus",
 			"done",
@@ -104,6 +90,18 @@ describe("buildSettingItems", () => {
 		expect(maxRowsItem.values).toContain("75");
 		expect(maxRowsItem.values).not.toContain("custom...");
 
+		const timeoutItem = items.find((i) => i.id === "timeoutMs")!;
+		expect(timeoutItem.currentValue).toBe("8000");
+		expect(timeoutItem.values).toEqual([
+			"2000",
+			"4000",
+			"8000",
+			"15000",
+			"30000",
+			"60000",
+		]);
+		expect(timeoutItem.description).toBe(SETTING_DESCRIPTIONS.timeoutMs);
+
 		const binaryItem = items.find((i) => i.id === "binaryPath")!;
 		expect(binaryItem.currentValue).toBe("/usr/bin/chafa");
 		expect(binaryItem.values).toEqual(["(auto on PATH)", "/usr/bin/chafa"]);
@@ -124,11 +122,24 @@ describe("buildSettingItems", () => {
 		const maxRows = items.find((i) => i.id === "maxRows")!;
 		expect(maxRows.values?.[0]).toBe("99");
 
+		const timeout = items.find((i) => i.id === "timeoutMs")!;
+		expect(timeout.currentValue).toBe("8000");
+		expect(timeout.values?.[0]).toBe("2000");
+
 		const symbols = items.find((i) => i.id === "symbolsSet")!;
 		expect(symbols.values?.[0]).toBe("braille+ascii");
 
 		const binary = items.find((i) => i.id === "binaryPath")!;
 		expect(binary.currentValue).toBe("(auto on PATH)");
+	});
+
+	it("prepends a custom timeoutMs when it is not in the preset ladder", () => {
+		const customTimeout: ChafaConfig = { ...DEFAULT_CONFIG, timeoutMs: 12345 };
+		const items = buildSettingItems(customTimeout);
+		const timeout = items.find((i) => i.id === "timeoutMs")!;
+		expect(timeout.currentValue).toBe("12345");
+		expect(timeout.values?.[0]).toBe("12345");
+		expect(timeout.values?.length).toBe(7);
 	});
 });
 
@@ -163,56 +174,61 @@ describe("createSettingsTheme", () => {
 describe("applyMenuChange", () => {
 	const base: ChafaConfig = { ...DEFAULT_CONFIG };
 
-	it("parses numeric cellWidth and maxRows using legacy and canonical keys", () => {
-		expect(applyMenuChange(base, "Change cellWidth", "  84  ")!.cellWidth).toBe(84);
+	it("parses numeric cellWidth, maxRows, and timeoutMs", () => {
+		expect(applyMenuChange(base, "cellWidth", "  84  ")!.cellWidth).toBe(84);
 		expect(applyMenuChange(base, "cellWidth", "100")!.cellWidth).toBe(100);
-		expect(applyMenuChange(base, "Change cellWidth", "-5")).toBeNull();
+		expect(applyMenuChange(base, "cellWidth", "-5")).toBeNull();
 		expect(applyMenuChange(base, "cellWidth", "abc")).toBeNull();
 
-		expect(applyMenuChange(base, "Change maxRows", "  40  ")!.maxRows).toBe(40);
+		expect(applyMenuChange(base, "maxRows", "  40  ")!.maxRows).toBe(40);
 		expect(applyMenuChange(base, "maxRows", "65")!.maxRows).toBe(65);
-		expect(applyMenuChange(base, "Change maxRows", "0")).toBeNull();
+		expect(applyMenuChange(base, "maxRows", "0")).toBeNull();
+
+		expect(applyMenuChange(base, "timeoutMs", " 2000 ")!.timeoutMs).toBe(2000);
+		expect(applyMenuChange(base, "timeoutMs", "60000")!.timeoutMs).toBe(60000);
+		expect(applyMenuChange(base, "timeoutMs", "0")).toBeNull();
+		expect(applyMenuChange(base, "timeoutMs", "1.5")).toBeNull();
+		expect(applyMenuChange(base, "timeoutMs", "fast")).toBeNull();
 	});
 
 	it("validates colors against the enum and rejects bad input", () => {
-		expect(applyMenuChange(base, "Change colors", "16")!.colors).toBe("16");
+		expect(applyMenuChange(base, "colors", "16")!.colors).toBe("16");
 		expect(applyMenuChange(base, "colors", "full")!.colors).toBe("full");
-		expect(applyMenuChange(base, "Change colors", "neon")).toBeNull();
+		expect(applyMenuChange(base, "colors", "neon")).toBeNull();
 		expect(applyMenuChange(base, "colors", "")).toBeNull();
 	});
 
 	it("validates dither mode against the enum and rejects bad input", () => {
-		expect(applyMenuChange(base, "Change dither", "diffusion")!.dither).toBe("diffusion");
+		expect(applyMenuChange(base, "dither", "diffusion")!.dither).toBe("diffusion");
 		expect(applyMenuChange(base, "dither", "ordered")!.dither).toBe("ordered");
-		expect(applyMenuChange(base, "Change dither", "invalid")).toBeNull();
+		expect(applyMenuChange(base, "dither", "invalid")).toBeNull();
 	});
 
 	it("validates symbolsSet rejects empty string", () => {
-		expect(applyMenuChange(base, "Change symbols set", "ascii")!.symbolsSet).toBe("ascii");
+		expect(applyMenuChange(base, "symbolsSet", "ascii")!.symbolsSet).toBe("ascii");
 		expect(applyMenuChange(base, "symbolsSet", "braille")!.symbolsSet).toBe("braille");
 		expect(applyMenuChange(base, "symbolsSet", "   ")).toBeNull();
 	});
 
 	it("toggles preferNative without reading a value, or parses true/false", () => {
-		expect(applyMenuChange(base, "Toggle preferNative", "")!.preferNative).toBe(false);
+		expect(applyMenuChange(base, "preferNative", "")!.preferNative).toBe(false);
 		expect(
-			applyMenuChange({ ...base, preferNative: false }, "Toggle preferNative", "")!
+			applyMenuChange({ ...base, preferNative: false }, "preferNative", "")!
 				.preferNative,
 		).toBe(true);
 		expect(applyMenuChange(base, "preferNative", "true")!.preferNative).toBe(true);
 		expect(applyMenuChange(base, "preferNative", "false")!.preferNative).toBe(false);
-		expect(applyMenuChange(base, "preferNative", "")!.preferNative).toBe(false);
 		expect(applyMenuChange(base, "preferNative", "maybe")).toBeNull();
 	});
 
 	it("accepts a binary path or clears it", () => {
-		expect(
-			applyMenuChange(base, "Set chafa binary path", "/opt/chafa")!.binaryPath,
-		).toBe("/opt/chafa");
+		expect(applyMenuChange(base, "binaryPath", "/opt/chafa")!.binaryPath).toBe(
+			"/opt/chafa",
+		);
 		expect(applyMenuChange(base, "binaryPath", "/usr/bin/chafa")!.binaryPath).toBe(
 			"/usr/bin/chafa",
 		);
-		expect(applyMenuChange(base, "Set chafa binary path", "")!.binaryPath).toBeNull();
+		expect(applyMenuChange(base, "binaryPath", "")!.binaryPath).toBeNull();
 		expect(applyMenuChange(base, "binaryPath", "(auto on PATH)")!.binaryPath).toBeNull();
 		expect(applyMenuChange(base, "binaryPath", "   ")!.binaryPath).toBeNull();
 	});
@@ -222,8 +238,39 @@ describe("applyMenuChange", () => {
 	});
 });
 
+describe("resolveRuntimeCaps", () => {
+	it("reports the host getCapabilities() value when it is non-null", () => {
+		expect(resolveRuntimeCaps("kitty", "iterm2", "iterm2")).toEqual({
+			capsImages: "kitty",
+			capsSource: "getCapabilities()",
+		});
+	});
+	it("falls back to terminal.images when caps is null (dual-instance hazard)", () => {
+		expect(resolveRuntimeCaps(null, "iterm2", undefined)).toEqual({
+			capsImages: "iterm2",
+			capsSource: "terminal.images",
+		});
+	});
+	it("falls back to PI_IMAGE_PROTOCOL when caps and settings are empty", () => {
+		expect(resolveRuntimeCaps(null, null, "kitty")).toEqual({
+			capsImages: "kitty",
+			capsSource: "PI_IMAGE_PROTOCOL",
+		});
+	});
+	it("reports none when no source yields a protocol", () => {
+		expect(resolveRuntimeCaps(null, null, undefined)).toEqual({
+			capsImages: null,
+			capsSource: "none",
+		});
+		expect(resolveRuntimeCaps(null, null, "none")).toEqual({
+			capsImages: null,
+			capsSource: "none",
+		});
+	});
+});
+
 describe("collectRuntimeFacts + describeRuntime", () => {
-	it("reports protocol, showImages, pretty-read override, and chafa version", () => {
+	it("reports effective protocol, source, showImages, pretty-read, and chafa version", () => {
 		const pi = {
 			getAllTools: () => [
 				{ name: "read", sourceInfo: { source: "pi-pretty" } },
@@ -232,13 +279,13 @@ describe("collectRuntimeFacts + describeRuntime", () => {
 		};
 		const facts = collectRuntimeFacts(
 			pi as never,
-			"kitty",
+			resolveRuntimeCaps(null, "kitty", undefined),
 			true,
 			{ present: true, binary: "/usr/bin/chafa", version: "1.18.2" },
 		);
 		expect(facts.prettyRead).toBe(true);
 		expect(describeRuntime(facts)).toEqual([
-			"Detected image protocol: kitty",
+			"Detected image protocol: kitty (source: terminal.images)",
 			"Host showImages: on",
 			"pi-pretty-style read override: detected",
 			"chafa: 1.18.2 (/usr/bin/chafa)",
@@ -248,10 +295,15 @@ describe("collectRuntimeFacts + describeRuntime", () => {
 		const pi = {
 			getAllTools: () => [{ name: "read", sourceInfo: { source: "builtin" } }],
 		};
-		const facts = collectRuntimeFacts(pi as never, null, false, {
-			present: false,
-			error: "chafa was not found on PATH (looked for chafa).",
-		});
+		const facts = collectRuntimeFacts(
+			pi as never,
+			resolveRuntimeCaps(null, null, undefined),
+			false,
+			{
+				present: false,
+				error: "chafa was not found on PATH (looked for chafa).",
+			},
+		);
 		expect(facts.prettyRead).toBe(false);
 		expect(describeRuntime(facts)).toEqual([
 			"Detected image protocol: none",
@@ -394,7 +446,9 @@ describe("runImagesCommand", () => {
 		const notifyMock = vi.fn();
 		const selectMock = vi
 			.fn()
-			.mockResolvedValueOnce("Binary path: [(auto on PATH)] — " + SETTING_DESCRIPTIONS.binaryPath)
+			.mockResolvedValueOnce(
+				`Binary path: [(auto on PATH)] — ${SETTING_DESCRIPTIONS.binaryPath}`,
+			)
 			.mockResolvedValueOnce("Auto (system PATH)")
 			.mockResolvedValueOnce(`Done — ${SETTING_DESCRIPTIONS.done}`);
 
@@ -412,6 +466,159 @@ describe("runImagesCommand", () => {
 			expect.stringContaining("cleared binaryPath"),
 			"info",
 		);
+	});
+
+	it("sets timeoutMs from a preset in fallback mode", async () => {
+		const pi = { getAllTools: () => [] };
+		const notifyMock = vi.fn();
+		const selectMock = vi
+			.fn()
+			.mockResolvedValueOnce(
+				`Timeout (ms): [8000] — ${SETTING_DESCRIPTIONS.timeoutMs}`,
+			)
+			.mockResolvedValueOnce("15000")
+			.mockResolvedValueOnce(`Done — ${SETTING_DESCRIPTIONS.done}`);
+
+		const ctx = {
+			ui: { select: selectMock, notify: notifyMock, input: vi.fn() },
+		};
+
+		await runImagesCommand(pi as never, "", ctx as never);
+
+		expect(loadConfig(testDir).timeoutMs).toBe(15000);
+		expect(notifyMock).toHaveBeenCalledWith(
+			"pi-chafa: timeoutMs is now 15000",
+			"info",
+		);
+	});
+
+	it("sets a custom timeoutMs via the fallback Custom... free-text path", async () => {
+		const pi = { getAllTools: () => [] };
+		const notifyMock = vi.fn();
+		const inputMock = vi.fn().mockResolvedValue("2500");
+		const selectMock = vi
+			.fn()
+			.mockResolvedValueOnce(
+				`Timeout (ms): [8000] — ${SETTING_DESCRIPTIONS.timeoutMs}`,
+			)
+			.mockResolvedValueOnce("Custom...")
+			.mockResolvedValueOnce(`Done — ${SETTING_DESCRIPTIONS.done}`);
+
+		const ctx = {
+			ui: { select: selectMock, notify: notifyMock, input: inputMock },
+		};
+
+		await runImagesCommand(pi as never, "", ctx as never);
+
+		expect(inputMock).toHaveBeenCalledWith(
+			"Enter custom timeoutMs (milliseconds)",
+			"positive integer ms",
+		);
+		expect(loadConfig(testDir).timeoutMs).toBe(2500);
+		expect(notifyMock).toHaveBeenCalledWith(
+			"pi-chafa: timeoutMs is now 2500",
+			"info",
+		);
+	});
+
+	it("persists timeoutMs through the TUI custom-input path", async () => {
+		const pi = { getAllTools: () => [] };
+		const notifyMock = vi.fn();
+		const inputMock = vi.fn().mockResolvedValue("30000");
+
+		let invocation = 0;
+		const customMock = vi.fn().mockImplementation(async (cb) => {
+			invocation++;
+			const tui = { requestRender: vi.fn() };
+			const theme = {
+				fg: (_c: string, text: string) => text,
+				bold: (text: string) => text,
+			};
+			cb(tui, theme, {}, () => {});
+			if (invocation === 1) return { action: "input", id: "timeoutMs" };
+			return { action: "done" };
+		});
+
+		const ctx = {
+			ui: {
+				custom: customMock,
+				select: vi.fn(),
+				notify: notifyMock,
+				input: inputMock,
+			},
+		};
+
+		await runImagesCommand(pi as never, "", ctx as never);
+
+		expect(inputMock).toHaveBeenCalledWith(
+			"New timeoutMs (milliseconds)",
+			expect.any(String),
+		);
+		expect(loadConfig(testDir).timeoutMs).toBe(30000);
+		expect(notifyMock).toHaveBeenCalledWith(
+			"pi-chafa: saved timeoutMs = 30000",
+			"info",
+		);
+	});
+
+	it("warns and keeps the previous timeoutMs when TUI input is invalid", async () => {
+		const pi = { getAllTools: () => [] };
+		const notifyMock = vi.fn();
+		const inputMock = vi.fn().mockResolvedValue("-4");
+
+		let invocation = 0;
+		const customMock = vi.fn().mockImplementation(async (cb) => {
+			invocation++;
+			const tui = { requestRender: vi.fn() };
+			const theme = {
+				fg: (_c: string, text: string) => text,
+				bold: (text: string) => text,
+			};
+			cb(tui, theme, {}, () => {});
+			if (invocation === 1) return { action: "input", id: "timeoutMs" };
+			return { action: "done" };
+		});
+
+		const ctx = {
+			ui: {
+				custom: customMock,
+				select: vi.fn(),
+				notify: notifyMock,
+				input: inputMock,
+			},
+		};
+
+		await runImagesCommand(pi as never, "", ctx as never);
+
+		expect(notifyMock).toHaveBeenCalledWith(
+			"pi-chafa: invalid timeoutMs (must be positive integer)",
+			"warning",
+		);
+		expect(loadConfig(testDir).timeoutMs).toBe(8000);
+	});
+
+	it("shows the effective capability and source in the runtime status panel", async () => {
+		const pi = { getAllTools: () => [] };
+		const notifyMock = vi.fn();
+		const selectMock = vi
+			.fn()
+			.mockResolvedValueOnce(
+				`Runtime status — ${SETTING_DESCRIPTIONS.runtimeStatus}`,
+			)
+			.mockResolvedValueOnce("Close")
+			.mockResolvedValueOnce(`Done — ${SETTING_DESCRIPTIONS.done}`);
+
+		const ctx = {
+			ui: { select: selectMock, notify: notifyMock, input: vi.fn() },
+		};
+
+		await runImagesCommand(pi as never, "", ctx as never);
+
+		const statusOptions = selectMock.mock.calls[1]?.[1] as string[];
+		expect(statusOptions.join("\n")).toContain("Detected image protocol: ");
+		expect(statusOptions.join("\n")).toContain("Host showImages: ");
+		expect(statusOptions.join("\n")).toContain("pi-pretty-style read override: ");
+		expect(statusOptions.join("\n")).toContain("chafa: ");
 	});
 });
 

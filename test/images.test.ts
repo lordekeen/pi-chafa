@@ -84,12 +84,19 @@ describe("readBytes + sniffMime", () => {
 	const PNG = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 1]);
 	const JPEG = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0, 0]);
 	const GIF = Buffer.from("GIF89a....", "ascii");
+	const GIF87 = Buffer.from("GIF87a....", "ascii");
 	const WEBP = Buffer.from("RIFF\x24\x00\x00\x00WEBPVP8 ", "ascii");
 	it("sniffs png/jpeg/gif/webp magic bytes", () => {
 		expect(sniffMime(PNG)).toBe("image/png");
 		expect(sniffMime(JPEG)).toBe("image/jpeg");
 		expect(sniffMime(GIF)).toBe("image/gif");
+		expect(sniffMime(GIF87)).toBe("image/gif");
 		expect(sniffMime(WEBP)).toBe("image/webp");
+	});
+	it("keeps the 6-byte GIF length guard", () => {
+		expect(sniffMime(Buffer.from("GIF8", "ascii"))).toBe(
+			"application/octet-stream",
+		);
 	});
 	it("falls back to application/octet-stream for unknown bytes", () => {
 		expect(sniffMime(Buffer.from("hello world"))).toBe("application/octet-stream");
