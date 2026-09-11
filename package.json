@@ -7,7 +7,7 @@
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
-  "files": ["dist/", "skills/", "README.md", "LICENSE", "pi-chafa.example.json"],
+  "files": ["dist/", "src/", "skills/", "README.md", "LICENSE", "pi-chafa.example.json"],
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc --noEmit",
@@ -33,7 +33,7 @@
     "typebox": "*"
   },
   "pi": {
-    "extensions": ["./dist/index.js"],
+    "extensions": ["./src/index.ts"],
     "skills": ["./skills"]
   }
 }
