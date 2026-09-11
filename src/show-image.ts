@@ -129,6 +129,20 @@ function stripControls(s: string): string {
 	return s.replace(CSI_RE, "").replace(CONTROL_RE, "");
 }
 
+/**
+ * Build an abort-shaped error a caller can classify (AGENTS.md invariant 4;
+ * DESIGN.md §4 chose AbortError propagation). Prefers the signal's own reason
+ * when it is an Error (Node's DOMException AbortError carries name + code).
+ */
+function abortError(signal: AbortSignal | undefined): Error {
+	const reason = signal?.reason;
+	if (reason instanceof Error) return reason;
+	const err = new Error("show_image was aborted") as Error & { code?: string };
+	err.name = "AbortError";
+	err.code = "ABORT_ERR";
+	return err;
+}
+
 /** Effective-settings snapshot recorded in details for renderers/transcript (spec §7.1 steps 2/5). */
 function settingsRecord(
 	resolved: ResolvedConfig,
@@ -157,31 +171,42 @@ export function summaryText(
 	const label =
 		mode === "native" ? "via terminal-native rendering" : "as ANSI art";
 
+	// Shown-file notes (unknown mime, no output, maxRows cap) belong on the
+	// model-visible surface (spec §8). Sanitize (AGENTS.md invariant 3),
+	// de-duplicate, and join them in insertion order (spec §4.1.2).
+	const notes = [
+		...new Set(
+			shown
+				.map((file) => (file.note ? stripControls(file.note) : ""))
+				.filter((note) => note !== ""),
+		),
+	];
+	const noteClause = notes.length > 0 ? ` Note: ${notes.join("; ")}.` : "";
+
 	if (mode === "none") {
 		const head =
 			files.length <= 1
 				? `Showed image ${name} to the user`
 				: `Showed ${files.length} image(s) to the user`;
-		return `${head} [image display unavailable in this session].`;
+		return `${head} [image display unavailable in this session].${noteClause}`;
 	}
 	const head =
 		files.length <= 1
 			? `Showed image ${name} to the user ${label}`
 			: `Showed ${files.length} image(s) to the user ${label}`;
 	const tail = failed > 0 ? ` ${failed} file(s) could not be shown.` : "";
-	return `${head}.${tail}`;
+	return `${head}.${tail}${noteClause}`;
 }
 
 /** Flatten the text blocks of a result — reused by the renderers (Task 8). */
 export function textFromContent(
 	content: AgentToolResult<ShowImageDetails>["content"],
 ): string {
-	return content
-		.filter(
-			(block): block is { type: "text"; text: string } => block.type === "text",
-		)
-		.map((block) => block.text)
-		.join("\n");
+	const texts: string[] = [];
+	for (const block of content) {
+		if (block.type === "text") texts.push(block.text);
+	}
+	return texts.join("\n");
 }
 
 /** User-visible text for a completed result: summary caption + symbols payload (spec §4.1.3). */
@@ -322,7 +347,7 @@ export function buildShowImageTool(
 			let progress = 0;
 			for (const filePath of matched) {
 				progress += 1;
-				if (signal?.aborted) throw new Error("show_image was aborted");
+				if (signal?.aborted) throw abortError(signal);
 				if (matched.length > 1 && onUpdate) {
 					onUpdate({
 						content: [
@@ -363,19 +388,34 @@ export function buildShowImageTool(
 							{ timeoutMs: resolved.symbols.timeoutMs, signal },
 						);
 						const payload = d.cleanPayload(stdout);
+						const rows = payload === "" ? 0 : payload.split("\n").length;
+						const maxRows = resolved.symbols.maxRows;
+						let note: string | undefined;
+						if (payload === "") {
+							note = "chafa produced no output";
+						} else if (rows >= maxRows) {
+							note = `output capped at maxRows=${maxRows} rows; the image was scaled down to fit`;
+						}
 						files.push({
 							path: filePath,
 							ok: true,
 							mode,
-							note: payload === "" ? "chafa produced no output" : undefined,
+							note,
 						});
 						payloads.push(payload);
 					}
 				} catch (error) {
-					// A user abort surfaces mid-run (chafa's AbortError); propagate
-					// it instead of recording a misleading per-file failure.
-					if (signal?.aborted) {
-						throw new Error("show_image was aborted");
+					// A user abort surfaces mid-run (chafa's AbortError); rethrow the
+					// ORIGINAL error so callers can classify it — never report a
+					// misleading per-file failure or a bare unclassifiable error
+					// (AGENTS.md invariant 4).
+					const err = error as { name?: string; code?: string } | undefined;
+					if (
+						err?.name === "AbortError" ||
+						err?.code === "ABORT_ERR" ||
+						signal?.aborted
+					) {
+						throw error ?? abortError(signal);
 					}
 					// Per-file failure: record and continue (spec §8, mixed results).
 					files.push({
@@ -391,7 +431,7 @@ export function buildShowImageTool(
 				// All files failed → aggregate into a thrown (isError) result
 				// (Task 0 fact 2: the host maps a throw to isError with this text).
 				throw new Error(
-					`none of the ${files.length} matched file(s) could be shown. First error: ${files[0]?.note ?? "unknown error"}`,
+					`none of the ${files.length} matched file(s) could be shown. First error: ${stripControls(files[0]?.note ?? "unknown error")}`,
 				);
 			}
 

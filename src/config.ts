@@ -1,4 +1,4 @@
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import {
@@ -44,6 +44,14 @@ export const CHAFA_ENV_KEYS = [
 export function getConfigDir(): string {
 	const override = process.env.CHAFA_CONFIG_DIR;
 	if (override && override.trim() !== "") return override.trim();
+	return join(homedir(), ".pi", "agent");
+}
+
+/**
+ * pi's own agent dir (~/.pi/agent) — used for pi's settings.json. Ignores
+ * CHAFA_CONFIG_DIR, whose override is scoped to pi-chafa.json only (spec §6.2).
+ */
+export function getHostAgentDir(): string {
 	return join(homedir(), ".pi", "agent");
 }
 
@@ -188,11 +196,19 @@ export function resolveConfig(
 ): ResolvedConfig {
 	const fromFile = loadConfig(agentDir);
 	const cfg = applyEnv(fromFile);
+	// Per-call symbolsSet must trim to non-empty like the config-file rule
+	// (validateConfig above); an empty/whitespace override would otherwise
+	// reach chafa as `--symbols ""` (spec §4.1.1 / §6.3).
+	const symbolsSet =
+		typeof overrides.symbolsSet === "string" &&
+		overrides.symbolsSet.trim() !== ""
+			? overrides.symbolsSet.trim()
+			: cfg.symbolsSet;
 	const symbols: EffectiveSymbolsSettings = {
 		cellWidth: overrides.cellWidth ?? cfg.cellWidth,
 		maxRows: cfg.maxRows,
 		colors: overrides.colors ?? cfg.colors,
-		symbolsSet: overrides.symbolsSet ?? cfg.symbolsSet,
+		symbolsSet,
 		dither: overrides.dither ?? cfg.dither,
 		timeoutMs: cfg.timeoutMs,
 		binaryPath: cfg.binaryPath,
@@ -210,7 +226,7 @@ export function resolveConfig(
  * (terminal.showImages: true, terminal.imageWidthCells: 60).
  */
 export function readHostImageSettings(
-	agentDir: string = getConfigDir(),
+	agentDir: string = getHostAgentDir(),
 ): HostImageSettings {
 	const result: HostImageSettings = { showImages: true, imageWidthCells: 60 };
 	if (!agentDir) return result;
@@ -240,9 +256,11 @@ export function writeConfigFile(agentDir: string, config: ChafaConfig): void {
 			"no config directory available (set CHAFA_CONFIG_DIR or HOME)",
 		);
 	mkdirSync(agentDir, { recursive: true });
-	writeFileSync(
-		join(agentDir, "pi-chafa.json"),
-		`${JSON.stringify(config, null, 2)}\n`,
-		"utf8",
-	);
+	// Atomic persistence (AGENTS.md architecture table): write a sibling temp
+	// file, then rename it over the target so readers never observe a partial
+	// write. renameSync is atomic within a filesystem (spec §2).
+	const target = join(agentDir, "pi-chafa.json");
+	const tmp = join(agentDir, "pi-chafa.json.tmp");
+	writeFileSync(tmp, `${JSON.stringify(config, null, 2)}\n`, "utf8");
+	renameSync(tmp, target);
 }

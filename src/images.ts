@@ -88,7 +88,13 @@ function walkFiles(root: string): string[] {
 			}
 		}
 	}
-	return out.sort();
+	return out.sort(compareCodeUnits);
+}
+
+function compareCodeUnits(a: string, b: string): number {
+	if (a < b) return -1;
+	if (a > b) return 1;
+	return 0;
 }
 
 function posix(p: string): string {

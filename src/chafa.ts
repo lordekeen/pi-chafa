@@ -97,12 +97,14 @@ function nodeExecFile(
 }
 
 function installHint(binary: string): string {
-	const hint =
-		process.platform === "darwin"
-			? "brew install chafa"
-			: process.platform === "win32"
-				? "grab a build from https://hpjansson.org/chafa/"
-				: "apt install chafa (or your distro's package)";
+	let hint: string;
+	if (process.platform === "darwin") {
+		hint = "brew install chafa";
+	} else if (process.platform === "win32") {
+		hint = "grab a build from https://hpjansson.org/chafa/";
+	} else {
+		hint = "apt install chafa (or your distro's package)";
+	}
 	return `chafa was not found on PATH (looked for ${binary}). Install it with: ${hint}. Or set CHAFA_BIN to its absolute path.`;
 }
 

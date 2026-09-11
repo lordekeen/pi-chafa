@@ -57,6 +57,7 @@ function makeTool(overrides: {
 	runStdout?: string;
 	probeChafa?: () => Promise<{ binary: string; version: { major: number; minor: number } }>;
 	runChafa?: ShowImageDeps["runChafa"];
+	sniffMime?: ShowImageDeps["sniffMime"];
 } = {}) {
 	const capsImages = overrides.capsImages === undefined ? "kitty" : overrides.capsImages;
 	const showImages = overrides.showImages ?? true;
@@ -75,7 +76,7 @@ function makeTool(overrides: {
 			if (path !== pngPath) throw new Error(`failed to read ${path}: ENOENT`);
 			return Buffer.from(PNG_BASE64, "base64");
 		},
-		sniffMime: () => "image/png",
+		sniffMime: overrides.sniffMime ?? (() => "image/png"),
 		probeChafa:
 			overrides.probeChafa ?? (async () => ({ binary: "/usr/bin/chafa", version: { major: 1, minor: 18 } })),
 		runChafa: overrides.runChafa ?? (async () => overrides.runStdout ?? RAW_ART),
@@ -130,6 +131,25 @@ describe("summaryText (locked wording, open question 5)", () => {
 		expect(text).not.toContain("\u001b");
 		expect(text).toBe("Showed image pic.png to the user as ANSI art.");
 	});
+	it("appends a de-duplicated Note clause when shown files carry notes", () => {
+		const files: ShowImageFile[] = [
+			{ path: join(dir, "1.png"), ok: true, mode: "native", note: "unknown image format" },
+			{ path: join(dir, "2.png"), ok: true, mode: "native", note: "unknown image format" },
+			{ path: join(dir, "3.png"), ok: true, mode: "native" },
+		];
+		expect(summaryText(files, "native")).toBe(
+			"Showed 3 image(s) to the user via terminal-native rendering. Note: unknown image format.",
+		);
+	});
+	it("omits the Note clause when no shown file carries a note", () => {
+		const files: ShowImageFile[] = [
+			{ path: pngPath, ok: true, mode: "symbols" },
+			{ path: join(dir, "2.png"), ok: false, mode: "symbols", note: "failed to read" },
+		];
+		expect(summaryText(files, "symbols")).toBe(
+			"Showed 2 image(s) to the user as ANSI art. 1 file(s) could not be shown.",
+		);
+	});
 });
 
 describe("show_image execute — native path", () => {
@@ -148,6 +168,17 @@ describe("show_image execute — native path", () => {
 		expect(details.payload).toBeUndefined();
 		expect(details.files[0]?.ok).toBe(true);
 		expect(details.settings.format).toBe("auto");
+	});
+	it("surfaces the unknown-mime note in the model-visible summary (spec §8)", async () => {
+		const { tool, ctx } = makeTool({
+			capsImages: "kitty",
+			sniffMime: () => "application/octet-stream",
+		});
+		const result = await tool.execute("t11", { path: "pic.png" }, neverAbort(), noop as never, ctx);
+		const text = result.content.filter((c) => c.type === "text").map((c) => c.text).join("\n");
+		expect(text).toBe(
+			"Showed image pic.png to the user via terminal-native rendering. Note: unknown image format; the host may not render this natively.",
+		);
 	});
 	it("preferNative=false routes a native-capable session to symbols (never chafa on native by default is the default, not the only route)", async () => {
 		const { tool, ctx } = makeTool({ capsImages: "kitty" });
@@ -169,6 +200,38 @@ describe("show_image execute — symbols path", () => {
 		const details = result.details as ShowImageDetails;
 		expect(details.mode).toBe("symbols");
 		expect(details.payload).toBe(CLEAN_ART);
+	});
+	it("notes a chafa-produced-no-output result in the model-visible summary (§8)", async () => {
+		const { tool, ctx } = makeTool({ capsImages: null, runStdout: "" });
+		const result = await tool.execute("t12", { path: "pic.png" }, neverAbort(), noop as never, ctx);
+		const text = result.content.filter((c) => c.type === "text").map((c) => c.text).join("\n");
+		expect(text).toBe(
+			"Showed image pic.png to the user as ANSI art. Note: chafa produced no output.",
+		);
+	});
+	it("notes the maxRows cap when the cleaned payload reaches maxRows (spec §7.3)", async () => {
+		const capped = Array.from({ length: 50 }, () => "X").join("\n");
+		const cappedTool = makeTool({ capsImages: null, runStdout: capped });
+		const cappedResult = await cappedTool.tool.execute(
+			"t13",
+			{ path: "pic.png" },
+			neverAbort(),
+			noop as never,
+			cappedTool.ctx,
+		);
+		expect((cappedResult.details as ShowImageDetails).files[0]?.note).toBe(
+			"output capped at maxRows=50 rows; the image was scaled down to fit",
+		);
+		const shorter = Array.from({ length: 49 }, () => "X").join("\n");
+		const shorterTool = makeTool({ capsImages: null, runStdout: shorter });
+		const shorterResult = await shorterTool.tool.execute(
+			"t14",
+			{ path: "pic.png" },
+			neverAbort(),
+			noop as never,
+			shorterTool.ctx,
+		);
+		expect((shorterResult.details as ShowImageDetails).files[0]?.note).toBeUndefined();
 	});
 	it("throws an actionable error when chafa is missing on the symbols path", async () => {
 		const { tool, ctx } = makeTool({
@@ -199,6 +262,18 @@ describe("show_image execute — symbols path", () => {
 		await expect(
 			tool.execute("t10", { path: "pic.png" }, controller.signal, noop as never, ctx),
 		).rejects.not.toThrow(/timed out/);
+	});
+	it("throws an AbortError-shaped error when the signal is already aborted", async () => {
+		const controller = new AbortController();
+		controller.abort();
+		const { tool, ctx } = makeTool({ capsImages: "kitty" });
+		const err = await tool
+			.execute("t15", { path: "pic.png" }, controller.signal, noop as never, ctx)
+			.then(
+				() => undefined,
+				(e: unknown) => e,
+			);
+		expect((err as Error).name).toBe("AbortError");
 	});
 });
 

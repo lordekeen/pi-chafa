@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -8,6 +8,7 @@ import {
 	DEFAULT_CONFIG,
 	applyEnv,
 	getConfigDir,
+	getHostAgentDir,
 	loadConfig,
 	readHostImageSettings,
 	resolveConfig,
@@ -106,6 +107,17 @@ describe("resolveConfig precedence", () => {
 		expect(resolved.symbols.maxRows).toBe(DEFAULT_CONFIG.maxRows);
 		expect(resolved.symbols.timeoutMs).toBe(DEFAULT_CONFIG.timeoutMs);
 	});
+	it("falls back to config when a per-call symbolsSet is blank or whitespace (spec §4.1.1/§6.3)", () => {
+		expect(resolveConfig({ symbolsSet: "" }, dir).symbols.symbolsSet).toBe(
+			DEFAULT_CONFIG.symbolsSet,
+		);
+		expect(resolveConfig({ symbolsSet: "   " }, dir).symbols.symbolsSet).toBe(
+			DEFAULT_CONFIG.symbolsSet,
+		);
+	});
+	it("uses the trimmed per-call symbolsSet override", () => {
+		expect(resolveConfig({ symbolsSet: "  block  " }, dir).symbols.symbolsSet).toBe("block");
+	});
 });
 
 describe("getConfigDir", () => {
@@ -129,6 +141,33 @@ describe("readHostImageSettings", () => {
 	it("ignores a corrupt settings.json", () => {
 		writeFileSync(join(dir, "settings.json"), "nope");
 		expect(readHostImageSettings(dir)).toEqual({ showImages: true, imageWidthCells: 60 });
+	});
+	it("reads pi's settings from HOME, not CHAFA_CONFIG_DIR (spec §6.2)", () => {
+		const home = mkdtempSync(join(tmpdir(), "pi-chafa-home-"));
+		const prevHome = process.env.HOME;
+		try {
+			mkdirSync(join(home, ".pi", "agent"), { recursive: true });
+			writeFileSync(
+				join(home, ".pi", "agent", "settings.json"),
+				JSON.stringify({ terminal: { showImages: false, imageWidthCells: 42 } }),
+			);
+			// CHAFA_CONFIG_DIR's settings.json conflicts on purpose: it must be ignored.
+			writeFileSync(
+				join(dir, "settings.json"),
+				JSON.stringify({ terminal: { showImages: true, imageWidthCells: 99 } }),
+			);
+			process.env.CHAFA_CONFIG_DIR = dir;
+			process.env.HOME = home;
+			expect(getHostAgentDir()).toBe(join(home, ".pi", "agent"));
+			expect(readHostImageSettings()).toEqual({
+				showImages: false,
+				imageWidthCells: 42,
+			});
+		} finally {
+			if (prevHome === undefined) delete process.env.HOME;
+			else process.env.HOME = prevHome;
+			rmSync(home, { recursive: true, force: true });
+		}
 	});
 });
 
