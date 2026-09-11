@@ -12,7 +12,7 @@ import {
 	runChafa,
 } from "./chafa.js";
 import { readHostImageSettings, resolveConfig } from "./config.js";
-import { decideDelivery } from "./detect.js";
+import { decideDelivery, resolveCapsImages } from "./detect.js";
 import { expandTargets, readBytes, sniffMime } from "./images.js";
 import type {
 	AgentCapsImages,
@@ -97,7 +97,17 @@ function defaultDeps(): ShowImageDeps {
 	return {
 		resolveConfig,
 		readHostImages: readHostImageSettings,
-		capsImages: () => getCapabilities().images,
+		// Instance-independent capability ladder (spec §7.1 step 3): the host's
+		// pi-tui `getCapabilities()` is preferred, then pi's own `terminal.images`
+		// setting, then `PI_IMAGE_PROTOCOL`. This keeps the default native path
+		// reachable when pi-chafa binds its own pi-tui instance and never receives
+		// the host's `setCapabilityOverrides()`.
+		capsImages: () =>
+			resolveCapsImages(
+				getCapabilities().images,
+				readHostImageSettings().images,
+				process.env.PI_IMAGE_PROTOCOL,
+			),
 		expandTargets,
 		readBytes,
 		sniffMime,
@@ -240,6 +250,14 @@ export function renderShowResult(
 }
 
 /**
+ * Note shown when format=native was forced but the host has images off: the
+ * degradation is explicit, never silent (spec §7.1 step 3, §7.2 row 3). It
+ * rides the existing summary Note clause; a more specific per-file note wins.
+ */
+export const NATIVE_OFF_NOTE =
+	"format=native was requested but the host has images off; delivered as ANSI art";
+
+/**
  * Build the show_image ToolDefinition with injectable seams. Without overrides,
  * every seam points at the real modules. renderCall/renderResult render the
  * tool call and result as Text components.
@@ -330,6 +348,10 @@ export function buildShowImageTool(
 				preferNative: resolved.preferNative,
 				format: overrides.format ?? "auto",
 			});
+			// Forced format=native on a capable host with images off degrades to
+			// symbols (decideDelivery); record that so the note is not silent.
+			const nativeDegraded =
+				(overrides.format ?? "auto") === "native" && mode === "symbols";
 
 			// Symbols delivery needs a working chafa up front (spec §8); the
 			// probe result is the single source of truth for the binary path.
@@ -395,6 +417,9 @@ export function buildShowImageTool(
 							note = "chafa produced no output";
 						} else if (rows >= maxRows) {
 							note = `output capped at maxRows=${maxRows} rows; the image was scaled down to fit`;
+						} else if (nativeDegraded) {
+							// More specific per-file notes above take precedence.
+							note = NATIVE_OFF_NOTE;
 						}
 						files.push({
 							path: filePath,

@@ -128,19 +128,45 @@ describe("getConfigDir", () => {
 });
 
 describe("readHostImageSettings", () => {
-	it("defaults to showImages true and width 60 when settings.json is absent", () => {
-		expect(readHostImageSettings(dir)).toEqual({ showImages: true, imageWidthCells: 60 });
+	it("defaults to showImages true, width 60, and no protocol override when settings.json is absent", () => {
+		expect(readHostImageSettings(dir)).toEqual({
+			showImages: true,
+			imageWidthCells: 60,
+			images: null,
+		});
 	});
 	it("reads terminal.showImages and terminal.imageWidthCells from pi settings.json", () => {
 		writeFileSync(
 			join(dir, "settings.json"),
 			JSON.stringify({ terminal: { showImages: false, imageWidthCells: 90 } }),
 		);
-		expect(readHostImageSettings(dir)).toEqual({ showImages: false, imageWidthCells: 90 });
+		expect(readHostImageSettings(dir)).toEqual({
+			showImages: false,
+			imageWidthCells: 90,
+			images: null,
+		});
+	});
+	it("maps terminal.images to the protocol field; false/auto/unknown -> null", () => {
+		const write = (images: unknown) =>
+			writeFileSync(join(dir, "settings.json"), JSON.stringify({ terminal: { images } }));
+		write("kitty");
+		expect(readHostImageSettings(dir).images).toBe("kitty");
+		write("iterm2");
+		expect(readHostImageSettings(dir).images).toBe("iterm2");
+		write(false);
+		expect(readHostImageSettings(dir).images).toBe(null);
+		write("auto");
+		expect(readHostImageSettings(dir).images).toBe(null);
+		write("wezterm");
+		expect(readHostImageSettings(dir).images).toBe(null);
 	});
 	it("ignores a corrupt settings.json", () => {
 		writeFileSync(join(dir, "settings.json"), "nope");
-		expect(readHostImageSettings(dir)).toEqual({ showImages: true, imageWidthCells: 60 });
+		expect(readHostImageSettings(dir)).toEqual({
+			showImages: true,
+			imageWidthCells: 60,
+			images: null,
+		});
 	});
 	it("reads pi's settings from HOME, not CHAFA_CONFIG_DIR (spec §6.2)", () => {
 		const home = mkdtempSync(join(tmpdir(), "pi-chafa-home-"));
@@ -162,6 +188,7 @@ describe("readHostImageSettings", () => {
 			expect(readHostImageSettings()).toEqual({
 				showImages: false,
 				imageWidthCells: 42,
+				images: null,
 			});
 		} finally {
 			if (prevHome === undefined) delete process.env.HOME;

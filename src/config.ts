@@ -228,7 +228,11 @@ export function resolveConfig(
 export function readHostImageSettings(
 	agentDir: string = getHostAgentDir(),
 ): HostImageSettings {
-	const result: HostImageSettings = { showImages: true, imageWidthCells: 60 };
+	const result: HostImageSettings = {
+		showImages: true,
+		imageWidthCells: 60,
+		images: null,
+	};
 	if (!agentDir) return result;
 	try {
 		const parsed = JSON.parse(
@@ -241,6 +245,12 @@ export function readHostImageSettings(
 			const width = t.imageWidthCells;
 			if (typeof width === "number" && Number.isInteger(width) && width > 0) {
 				result.imageWidthCells = width;
+			}
+			// terminal.images vocabulary: "kitty" | "iterm2" | false | "auto"
+			// (settings.md). Only an explicit supported protocol survives;
+			// false / "auto" / absent / anything else means "no override".
+			if (t.images === "kitty" || t.images === "iterm2") {
+				result.images = t.images;
 			}
 		}
 	} catch {

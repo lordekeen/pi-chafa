@@ -4,7 +4,12 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { cleanSymbolsPayload } from "../src/chafa.js";
 import { DEFAULT_CONFIG } from "../src/config.js";
-import { buildShowImageTool, summaryText, type ShowImageDeps } from "../src/show-image.js";
+import { resolveCapsImages } from "../src/detect.js";
+import {
+	buildShowImageTool,
+	summaryText,
+	type ShowImageDeps,
+} from "../src/show-image.js";
 import type {
 	AgentCapsImages,
 	ChafaOverrides,
@@ -51,6 +56,8 @@ function resolvedConfig(overrides: ChafaOverrides = {}): ResolvedConfig {
 
 function makeTool(overrides: {
 	capsImages?: AgentCapsImages;
+	hostImages?: AgentCapsImages;
+	envProtocol?: string;
 	showImages?: boolean;
 	format?: "auto" | "native" | "symbols";
 	hasUI?: boolean;
@@ -60,13 +67,20 @@ function makeTool(overrides: {
 	sniffMime?: ShowImageDeps["sniffMime"];
 } = {}) {
 	const capsImages = overrides.capsImages === undefined ? "kitty" : overrides.capsImages;
+	const hostImages = overrides.hostImages ?? null;
+	const envProtocol = overrides.envProtocol;
 	const showImages = overrides.showImages ?? true;
-	const format = overrides.format ?? "auto";
 	const hasUI = overrides.hasUI ?? true;
 	const tool = buildShowImageTool({
 		resolveConfig: (perCall) => resolvedConfig(perCall),
-		readHostImages: (): HostImageSettings => ({ showImages, imageWidthCells: 60 }),
-		capsImages: () => capsImages,
+		readHostImages: (): HostImageSettings => ({
+			showImages,
+			imageWidthCells: 60,
+			images: hostImages,
+		}),
+		// The injected seam mirrors defaultDeps: the raw pi-tui read is pushed
+		// through the real fallback ladder against the injected host settings.
+		capsImages: () => resolveCapsImages(capsImages, hostImages, envProtocol),
 		expandTargets: (target, cwd) => {
 			const abs = join(cwd, target);
 			if (abs === pngPath) return [abs];
@@ -316,5 +330,76 @@ describe("show_image execute — forced native on non-native caps errors (spec �
 		await expect(
 			tool.execute("t9", { path: "pic.png", format: "native" }, neverAbort(), noop as never, ctx),
 		).rejects.toThrow(/format=native/);
+	});
+});
+
+describe("show_image execute — capability fallback ladder (headline fix)", () => {
+	it("chooses native when getCapabilities() is null but host settings report terminal.images=kitty", async () => {
+		// The dual pi-tui instance hazard: caps seen by the extension are null,
+		// while pi's own settings (and host rendering) say kitty.
+		const { tool, ctx } = makeTool({ capsImages: null, hostImages: "kitty" });
+		const result = await tool.execute("t16", { path: "pic.png" }, neverAbort(), noop as never, ctx);
+		const details = result.details as ShowImageDetails;
+		expect(details.mode).toBe("native");
+		const images = result.content.filter((c) => c.type === "image");
+		expect(images).toHaveLength(1);
+		const text = result.content
+			.filter((c) => c.type === "text")
+			.map((c) => c.text)
+			.join("\n");
+		expect(text).toBe("Showed image pic.png to the user via terminal-native rendering.");
+	});
+	it("still chooses native when only PI_IMAGE_PROTOCOL names a supported protocol", async () => {
+		const { tool, ctx } = makeTool({
+			capsImages: null,
+			hostImages: null,
+			envProtocol: "iterm2",
+		});
+		const result = await tool.execute("t17", { path: "pic.png" }, neverAbort(), noop as never, ctx);
+		expect((result.details as ShowImageDetails).mode).toBe("native");
+	});
+});
+
+describe("show_image execute — forced native with images off degrades with a note (spec §7.2 row 3)", () => {
+	it("delivers symbols, no throw, and surfaces the degradation note in the summary", async () => {
+		const { tool, ctx } = makeTool({ capsImages: "kitty", showImages: false });
+		const result = await tool.execute(
+			"t18",
+			{ path: "pic.png", format: "native" },
+			neverAbort(),
+			noop as never,
+			ctx,
+		);
+		const details = result.details as ShowImageDetails;
+		expect(details.mode).toBe("symbols");
+		expect(details.payload).toBeDefined();
+		expect(details.files[0]?.note).toBe(
+			"format=native was requested but the host has images off; delivered as ANSI art",
+		);
+		const text = result.content
+			.filter((c) => c.type === "text")
+			.map((c) => c.text)
+			.join("\n");
+		expect(text).toContain(
+			"Note: format=native was requested but the host has images off; delivered as ANSI art.",
+		);
+		expect(result.content.every((c) => c.type === "text")).toBe(true);
+	});
+	it("lets the more specific no-output note take precedence over the degradation note", async () => {
+		const { tool, ctx } = makeTool({
+			capsImages: "kitty",
+			showImages: false,
+			runStdout: "",
+		});
+		const result = await tool.execute(
+			"t19",
+			{ path: "pic.png", format: "native" },
+			neverAbort(),
+			noop as never,
+			ctx,
+		);
+		expect((result.details as ShowImageDetails).files[0]?.note).toBe(
+			"chafa produced no output",
+		);
 	});
 });

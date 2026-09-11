@@ -86,6 +86,11 @@ export interface ResolvedConfig {
 export interface HostImageSettings {
 	showImages: boolean;
 	imageWidthCells: number;
+	/**
+	 * `terminal.images` protocol override, normalized: `"kitty"` / `"iterm2"`,
+	 * else `null` for `false` / `"auto"` / absent / unrecognised (spec §6.4).
+	 */
+	images: AgentCapsImages;
 }
 
 /** Per-file outcome recorded in tool details (spec §5.3). */
@@ -101,14 +106,15 @@ export interface ShowImageFile {
 	note?: string;
 }
 
+/** The Chafa symbols knobs shared by the resolved config and the details snapshot (spec §6.3, §7.1). */
+export type SymbolsKnobs = Pick<
+	EffectiveSymbolsSettings,
+	"cellWidth" | "maxRows" | "colors" | "symbolsSet" | "dither"
+>;
+
 /** Effective settings snapshot recorded in details for renderers/transcript (spec §7.1 step 2/5). */
-export interface ShowImageSettings {
+export interface ShowImageSettings extends SymbolsKnobs {
 	format: DeliveryFormat;
-	cellWidth: number;
-	maxRows: number;
-	colors: ColorsMode;
-	symbolsSet: string;
-	dither: DitherMode;
 	preferNative: boolean;
 }
 
