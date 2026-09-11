@@ -15,6 +15,7 @@
     "lint:fix": "biome check --fix src/",
     "test": "vitest run --passWithNoTests",
     "test:watch": "vitest --passWithNoTests",
+    "test:smoke": "npm run build && node scripts/smoke.mjs",
     "prepublishOnly": "npm run build"
   },
   "devDependencies": {
