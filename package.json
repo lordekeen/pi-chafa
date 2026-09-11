@@ -14,7 +14,8 @@
     "lint": "biome check src/",
     "lint:fix": "biome check --fix src/",
     "test": "vitest run --passWithNoTests",
-    "test:watch": "vitest --passWithNoTests"
+    "test:watch": "vitest --passWithNoTests",
+    "prepublishOnly": "npm run build"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.3.5",
