@@ -18,7 +18,7 @@ Project context and rules for AI agents working in this repository. Read this be
    - Cursor toggle sequences must be cleanly stripped via [`cleanSymbolsPayload`](src/chafa.ts).
    - User paths and labels must be sanitized with [`stripControls`](src/show-image.ts) to prevent ANSI/control-character injection into the TUI.
 4. **Clean abort handling:** When an execution abort occurs via `AbortSignal`, it must be recognized as a user cancellation and thrown, never reported as a misleading timeout or swallowed as a per-file failure.
-5. **No native runtime dependencies:** Runtime dependencies rely on pi's peer packages and Node built-ins (`node:fs`, `node:path`, `node:child_process`). `chafa` is an external binary on `PATH`.
+5. **No native runtime dependencies:** Runtime dependencies rely on pi's peer packages (`@earendil-works/pi-*` plus `typebox`, a pi core package) and Node built-ins (`node:fs`, `node:path`, `node:child_process`). `typebox` is imported at runtime by `src/show-image.ts` and must stay declared in `peerDependencies` (it is also a devDependency for local builds). `chafa` is an external binary on `PATH`.
 6. **Precedence ladder:** Tool call parameters > `CHAFA_*` environment variables > `~/.pi/agent/pi-chafa.json` config > defaults.
 
 ## Files & Architecture
@@ -29,11 +29,12 @@ Project context and rules for AI agents working in this repository. Read this be
 | [`src/types.ts`](src/types.ts) | Core types, interfaces, and constant arrays ([`COLOR_MODES`](src/types.ts), [`DITHER_MODES`](src/types.ts), [`DELIVERY_FORMATS`](src/types.ts)). |
 | [`src/config.ts`](src/config.ts) | Configuration resolution, schema validation, host settings reading, and atomic persistence. |
 | [`src/chafa.ts`](src/chafa.ts) | Chafa binary probing, arg generation, subprocess execution with timeouts, and ANSI payload cleaner. |
-| [`src/detect.ts`](src/detect.ts) | Delivery decision engine implementing spec §7.2 matrix (native vs symbols vs none). |
+| [`src/detect.ts`](src/detect.ts) | Delivery decision engine implementing spec §7.2 matrix (native vs symbols vs none), and the effective image capability resolution (spec §6.4 ladder) via [`resolveCapsImages`](src/detect.ts). |
 | [`src/images.ts`](src/images.ts) | Path and glob expansion, magic byte sniffing for MIME types, and file reading. |
 | [`src/show-image.ts`](src/show-image.ts) | The `show_image` tool definition, execution loop, no-UI degradation, and custom TUI renderers. |
 | [`src/commands/images.ts`](src/commands/images.ts) | `/images` slash command panel, terminal capability inspector, and interactive settings menu. |
 | [`skills/pi-chafa/SKILL.md`](skills/pi-chafa/SKILL.md) | Bundled skill auto-discovered by pi, guiding models on when to call `show_image`. |
+| [`scripts/smoke.mjs`](scripts/smoke.mjs) | Opt-in real-dependency smoke runner (`npm run test:smoke`): builds `dist/` then drives it against the real chafa binary, the real filesystem, and the real capability ladder. Not published — `scripts/` is outside the `files` allowlist. |
 | [`docs/spec/2026-09-03-pi-chafa-extension-design.md`](docs/spec/2026-09-03-pi-chafa-extension-design.md) | Authoritative design specification. Spec wins in any conflict. |
 
 ## Verification Gates
@@ -49,9 +50,19 @@ npm run build       # tsc -p tsconfig.build.json (emits to dist/)
 
 Use `npm run lint:fix` to resolve formatting and import ordering issues.
 
+Optional, opt-in fifth gate — deliberately **not** part of `npm test`, because the unit suite injects fakes for chafa and must stay hermetic:
+
+```bash
+npm run test:smoke  # builds dist/ and drives the built artifact against the real chafa binary, filesystem, and image files
+```
+
+It requires `chafa` (≥ 1.10.0) and ImageMagick on `PATH`, and **skips cleanly with exit 0** when either is missing.
+
 ## Conventions
 
 - **TDD & Injected Dependencies:** Pure logic is separated from side effects. Tool implementations accept injected dependency records (e.g. [`ShowImageDeps`](src/show-image.ts)) so test suites run in headless Node without requiring an active pi TUI session or a physical GPU/display.
 - **Regex Safety:** Due to Biome's `noControlCharactersInRegex` lint rule, ANSI escape patterns and control-character regexes must be instantiated via `new RegExp(...)` from string constants (e.g., `ESC = "\x1b"`).
 - **Silent Degradation:** Invalid or unknown configuration fields are ignored silently rather than crashing the extension.
+- **Test-layer split:** Unit/integration tests inject fakes for chafa and stay hermetic. Coverage of the real binary, the real filesystem, and the real capability ladder lives in [`scripts/smoke.mjs`](scripts/smoke.mjs). Do not "fix" a hermetic test by pointing it at the real binary.
+- **Seam trap:** [`buildShowImageTool`](src/show-image.ts) merges `{ ...defaultDeps(), ...deps }`, so injecting `capsImages` replaces the spec §6.4 ladder wholesale. A test that injects `capsImages: () => null` must not expect native delivery. The ladder is covered directly via [`resolveCapsImages`](src/detect.ts), and end to end by the smoke runner calling `buildShowImageTool()` with no `capsImages` override.
 - **Conventional Commits:** Prefix commits with `feat:`, `fix:`, `docs:`, `chore:`, or `test:`.

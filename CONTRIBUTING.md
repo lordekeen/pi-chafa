@@ -56,7 +56,17 @@ To automatically format code and sort imports to match the repository standards:
 npm run lint:fix
 ```
 
+Optional, opt-in real-dependency smoke test — outside `npm test`, which must stay hermetic:
+
+```bash
+npm run test:smoke   # builds dist/ and drives it against the real chafa binary, real files, and the real filesystem
+```
+
+It requires `chafa` (≥ 1.10.0) and ImageMagick on `PATH`, and skips cleanly with exit 0 when either is missing.
+
 ### Activation Smoke Test
+
+The shipped extension entry is `./src/index.ts` (pi's loader transpiles it); `dist/` is still built on publish via `prepublishOnly`, so this compiled-bundle check remains a valid build verification.
 
 Verify that the compiled bundle activates cleanly and registers all tools and commands:
 
@@ -78,7 +88,7 @@ import('./dist/index.js').then((m) => {
 
 ## Coding Conventions
 
-1. **Zero Runtime Dependencies:** Keep the extension lightweight. Depend only on pi's peer packages (`@earendil-works/pi-ai`, `@earendil-works/pi-coding-agent`, `@earendil-works/pi-tui`) and Node built-in modules (`node:fs`, `node:path`, `node:child_process`).
+1. **Zero Runtime Dependencies:** Keep the extension lightweight. Depend only on pi's peer packages (`@earendil-works/pi-ai`, `@earendil-works/pi-coding-agent`, `@earendil-works/pi-tui`) plus `typebox` (a pi core package, declared peer dependency), and Node built-in modules (`node:fs`, `node:path`, `node:child_process`).
 2. **Test-Driven Design:** Add unit tests in [test/](test) for any new logic or bug fix. Inject dependencies (like `runChafa` or `readHostImages`) so tests remain fully deterministic and run headless.
 3. **ANSI & Control Sequence Safety:**
    - Plain text results must remain human-readable and clean of ANSI escapes.
@@ -99,4 +109,5 @@ import('./dist/index.js').then((m) => {
 - [ ] TypeScript passes with zero diagnostics (`npm run typecheck`).
 - [ ] All unit and integration tests pass (`npm test`).
 - [ ] Build succeeds and outputs clean artifacts to `dist/` (`npm run build`).
+- [ ] *If* `chafa` and ImageMagick are available on `PATH`: real-dependency smoke test passes (`npm run test:smoke`). It skips cleanly with exit 0 when they are not, so this is not a blocker on machines without them.
 - [ ] Documentation ([README.md](README.md), [DESIGN.md](DESIGN.md), [AGENTS.md](AGENTS.md)) updated if user-facing behavior or architectural contracts changed.
