@@ -33,10 +33,12 @@ description: Show image files to the user in the terminal with the show_image to
 
 ## Overrides
 
-- Defaults are normally fine. Pass `format: "symbols"` to force Chafa ANSI art on a native-capable terminal (testing, artistic preference), `format: "native"` to force native delivery, or `cellWidth`/`colors`/`symbolsSet`/`dither` to tune one call only — they never persist.
+- Defaults are normally fine. Pass `format: "symbols"` to force Chafa ANSI art on a native-capable terminal (testing, artistic preference), `format: "native"` to force native delivery when the session is native-capable, or `cellWidth`/`colors`/`symbolsSet`/`dither` to tune one call only — they never persist.
+- `format: "native"` errors only when the terminal cannot render natively; on a native-capable terminal where the host has images off, it degrades to symbols and adds a note to the result.
 
 ## After calling
 
 - Report plainly what you did. Animated files show a **still frame**.
+- The result summary may include a `Note:` clause (an unknown image format, output capped at the configured row limit, a degraded forced-native request, or chafa producing no output). Relay it to the user rather than ignoring it.
 - If the result mentions Chafa, tell the user how to install it (`brew install chafa` on macOS, `apt install chafa` on Debian/Ubuntu, or the distro package) or to set `CHAFA_BIN`.
 - Never fabricate image contents. If you did not see the image, say you did not.

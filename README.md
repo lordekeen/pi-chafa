@@ -23,7 +23,7 @@ The bundled `pi-chafa` skill is auto-discovered from the package `skills/` direc
 
 Ask the agent to show an image: "show me docs/plot.png" — the agent calls the `show_image` tool. 
 
-Run `/images` to tune defaults and inspect the runtime environment (detected protocol, host `showImages`, pi-pretty read override, chafa version):
+Run `/images` to tune defaults (including `timeoutMs`) and inspect the runtime environment (the **effective** protocol and which source supplied it — `getCapabilities()`, `terminal.images`, or `PI_IMAGE_PROTOCOL` — plus host `showImages`, pi-pretty read override, chafa version):
 - <kbd>↑</kbd> / <kbd>↓</kbd> — Navigate settings
 - <kbd>Enter</kbd> / <kbd>Space</kbd> — Cycle through presets inline
 - <kbd>e</kbd> — Open modal to type a custom value
@@ -35,6 +35,9 @@ Run `/images` to tune defaults and inspect the runtime environment (detected pro
 |---|---|
 | kitty / iTerm2 (showImages on) | native image blocks (default) |
 | kitty / iTerm2 with `preferNative: false` or `format: "symbols"` | Chafa symbols (forced) |
+| kitty / iTerm2 with host `showImages` off | Chafa symbols (the host would suppress image blocks) |
+| `format: "native"` on kitty / iTerm2 with host `showImages` off | Chafa symbols, with a note in the result |
+| `format: "native"` when the terminal is not native-capable | error (no silent fallback) |
 | anything else (null protocol) | Chafa symbols |
 
 On kitty, non-PNG images returned natively rely on pi's built-in PNG conversion; if conversion is unavailable those mimes are skipped by the host — use `format: "symbols"` there.
@@ -57,6 +60,8 @@ On kitty, non-PNG images returned natively rely on pi's built-in PNG conversion;
    ```
    *(Note: Use `"terminal": { "images": "kitty" }`. Do not use `"terminalCapabilityOverrides"`, which is an internal method name in pi).*
 
+Either override is now honoured directly by pi-chafa, so `show_image` works even when pi's own detection cannot see the terminal.
+
 ## Config file — `~/.pi/agent/pi-chafa.json`
 
 `version` (config schema version, default 1) plus:
@@ -65,7 +70,7 @@ On kitty, non-PNG images returned natively rely on pi's built-in PNG conversion;
 |---|---|---|---|
 | `preferNative` | boolean | `true` | Prefer kitty/iTerm2 whenever supported; `false` forces Chafa symbols even on native terminals. |
 | `cellWidth` | integer | `60` | Chafa width in columns (not clamped to live terminal width in v1). |
-| `maxRows` | integer | `50` | Chafa `--size` row cap for symbols output. |
+| `maxRows` | integer | `50` | Chafa `--size` row cap for symbols output. When the cap binds, the result notes it (`output capped at maxRows=N rows`). |
 | `colors` | enum | `240` | `none\|2\|8\|16\|240\|256\|full`. |
 | `symbolsSet` | string | `block+border` | Chafa `--symbols` class list; classes depend on your chafa version. |
 | `dither` | enum | `none` | `none\|ordered\|diffusion\|noise`. |
@@ -91,7 +96,7 @@ Precedence is always **tool params > `CHAFA_*` env > config file > defaults**.
 | `CHAFA_TIMEOUT_MS` | `timeoutMs` | Integer ms. |
 | `CHAFA_CONFIG_DIR` | config location | Override for `pi-chafa.json`; defaults to `~/.pi/agent`. |
 
-pi's own `terminal.showImages` / `terminal.imageWidthCells` / `terminal.images` and `PI_IMAGE_PROTOCOL` are respected (read-only) through `getCapabilities()` and pi's settings file.
+pi's image capability is resolved (read-only) through an explicit ladder, in priority order: `getCapabilities().images` → pi's settings `terminal.images` (`"kitty"`/`"iterm2"`; `false`, `"auto"`, absent, or unrecognised all mean "no override") → `PI_IMAGE_PROTOCOL` → `null` (Chafa symbols). `terminal.showImages` and `terminal.imageWidthCells` are also read; nothing in pi's settings is ever written.
 
 ## Limitations (v1)
 
