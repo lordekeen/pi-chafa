@@ -104,6 +104,7 @@ pi's image capability is resolved (read-only) through an explicit ladder, in pri
 - Symbols width is not clamped to the live terminal width (config `cellWidth` only).
 - No sixel — see the upstream pi TUI sixel proposal (docs/spec/2026-09-03-pi-tui-sixel-support-proposal.md) for the protocol roadmap.
 - Not a `read` override; pi-pretty's `read` may be preferable on native terminals (see the bundled skill).
+- On native terminals (kitty/iTerm2), a file that is not a recognized image format is a per-file error (`format="symbols"` may still render it via Chafa) — no image block is emitted, since a host-unrenderable block would be persisted in session history and rejected by providers on every later turn.
 
 ## Troubleshooting
 

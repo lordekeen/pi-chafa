@@ -183,16 +183,13 @@ describe("show_image execute — native path", () => {
 		expect(details.files[0]?.ok).toBe(true);
 		expect(details.settings.format).toBe("auto");
 	});
-	it("surfaces the unknown-mime note in the model-visible summary (spec §8)", async () => {
+	it("native path rejects a non-image mime so no image block is emitted", async () => {
 		const { tool, ctx } = makeTool({
 			capsImages: "kitty",
 			sniffMime: () => "application/octet-stream",
 		});
-		const result = await tool.execute("t11", { path: "pic.png" }, neverAbort(), noop as never, ctx);
-		const text = result.content.filter((c) => c.type === "text").map((c) => c.text).join("\n");
-		expect(text).toBe(
-			"Showed image pic.png to the user via terminal-native rendering. Note: unknown image format; the host may not render this natively.",
-		);
+		const promise = tool.execute("t11", { path: "pic.png" }, neverAbort(), noop as never, ctx);
+		await expect(promise).rejects.toThrow(/not a recognized image format/);
 	});
 	it("preferNative=false routes a native-capable session to symbols (never chafa on native by default is the default, not the only route)", async () => {
 		const { tool, ctx } = makeTool({ capsImages: "kitty" });

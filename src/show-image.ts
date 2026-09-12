@@ -389,16 +389,20 @@ export function buildShowImageTool(
 					if (mode === "native") {
 						const bytes = await d.readBytes(filePath);
 						const mimeType = d.sniffMime(bytes);
+						// Native delivery must never emit a block for a non-image
+						// mime: pi persists the block in session history and every
+						// later provider request fails with 400 (spec §7.4, §8).
+						if (!mimeType.startsWith("image/")) {
+							throw new Error(
+								`not a recognized image format (${mimeType}); use format="symbols" to try rendering it with Chafa`,
+							);
+						}
 						files.push({
 							path: filePath,
 							ok: true,
 							mode,
 							mimeType,
 							byteSize: bytes.byteLength,
-							note:
-								mimeType === "application/octet-stream"
-									? "unknown image format; the host may not render this natively"
-									: undefined,
 						});
 						imageBlocks.push({ data: bytes.toString("base64"), mimeType });
 					} else {
