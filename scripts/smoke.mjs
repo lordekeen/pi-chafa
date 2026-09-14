@@ -228,10 +228,14 @@ async function main(work) {
 	check("5h no-UI has no payload in details", headless.details.payload === undefined);
 	check("5h no-UI summary names the unavailability", /image display unavailable in this session/.test(textOf(headless)), textOf(headless));
 
-	// 5i. Unrenderable file on the native path -> note surfaced (spec §8).
-	const unknownRes = await buildShowImageTool({ capsImages: () => "kitty" }).execute("s9", { path: join(work, "unknown.bin") }, undefined, undefined, ctx);
-	check("5i unknown bytes noted in text", /Note: unknown image format/.test(textOf(unknownRes)), textOf(unknownRes));
-	check("5i unknown mime recorded", unknownRes.details.files[0]?.mimeType === "application/octet-stream");
+	// 5i. Unrenderable file on the native path -> per-file failure, never an image
+	// block (spec §7.4, §8). pi persists an image block in session history, so a
+	// host-unrenderable one would be rejected by providers on every later turn.
+	let unknownMsg = null;
+	try { await buildShowImageTool({ capsImages: () => "kitty" }).execute("s9", { path: join(work, "unknown.bin") }, undefined, undefined, ctx); } catch (e) { unknownMsg = e.message; }
+	check("5i unknown bytes on native path throw", /not a recognized image format/.test(unknownMsg ?? ""), String(unknownMsg).slice(0, 200));
+	check("5i error names the sniffed mime", /application\/octet-stream/.test(unknownMsg ?? ""), String(unknownMsg).slice(0, 200));
+	check("5i error suggests format=symbols", /format="symbols"/.test(unknownMsg ?? ""), String(unknownMsg).slice(0, 200));
 
 	// 6. round-trip: writeConfigFile -> loadConfig (atomic write path, real disk)
 	section("6. config persistence round-trip (real disk)");
