@@ -39,6 +39,7 @@ description: Show image files to the user in the terminal with the show_image to
 ## After calling
 
 - Report plainly what you did. Animated files show a **still frame**.
-- The result summary may include a `Note:` clause (an unknown image format, output capped at the configured row limit, a degraded forced-native request, or chafa producing no output). Relay it to the user rather than ignoring it.
+- The result summary may include a `Note:` clause (output capped at the configured row limit, a degraded forced-native request, or chafa producing no output). Relay it to the user rather than ignoring it.
+- On a **native** terminal, a file that is not a recognized image format is a **per-file error**, not a note: no image block is emitted, because pi persists that block in session history and providers reject it on every later turn. The error suggests retrying that file with `format: "symbols"`, which lets Chafa attempt it.
 - If the result mentions Chafa, tell the user how to install it (`brew install chafa` on macOS, `apt install chafa` on Debian/Ubuntu, or the distro package) or to set `CHAFA_BIN`.
 - Never fabricate image contents. If you did not see the image, say you did not.
