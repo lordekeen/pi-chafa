@@ -1,4 +1,10 @@
-import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import {
+	mkdirSync,
+	readFileSync,
+	renameSync,
+	rmSync,
+	writeFileSync,
+} from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import {
@@ -269,8 +275,18 @@ export function writeConfigFile(agentDir: string, config: ChafaConfig): void {
 	// Atomic persistence (AGENTS.md architecture table): write a sibling temp
 	// file, then rename it over the target so readers never observe a partial
 	// write. renameSync is atomic within a filesystem (spec §2).
+	// The temp name is unique per write (#009): a static name would let two
+	// racing writers clobber each other's temp file mid-flight. The finally
+	// block guarantees no `.tmp` residue survives a failed rename.
 	const target = join(agentDir, "pi-chafa.json");
-	const tmp = join(agentDir, "pi-chafa.json.tmp");
-	writeFileSync(tmp, `${JSON.stringify(config, null, 2)}\n`, "utf8");
-	renameSync(tmp, target);
+	const tmp = join(
+		agentDir,
+		`pi-chafa.${process.pid}.${Date.now().toString(36)}.${Math.random().toString(36).slice(2, 8)}.tmp`,
+	);
+	try {
+		writeFileSync(tmp, `${JSON.stringify(config, null, 2)}\n`, "utf8");
+		renameSync(tmp, target);
+	} finally {
+		rmSync(tmp, { force: true });
+	}
 }

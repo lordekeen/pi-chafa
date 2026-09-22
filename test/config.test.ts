@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -203,5 +203,18 @@ describe("writeConfigFile", () => {
 		const next: ChafaConfig = { ...DEFAULT_CONFIG, cellWidth: 72, preferNative: false };
 		writeConfigFile(dir, next);
 		expect(loadConfig(dir)).toEqual(next);
+	});
+	it("lands the last write and leaves no .tmp residue across sequential writes (#009)", () => {
+		writeConfigFile(dir, { ...DEFAULT_CONFIG, cellWidth: 61 });
+		writeConfigFile(dir, { ...DEFAULT_CONFIG, cellWidth: 62 });
+		expect(loadConfig(dir).cellWidth).toBe(62);
+		expect(readdirSync(dir).filter((name) => name.endsWith(".tmp"))).toEqual([]);
+	});
+	it("removes the temp file when the rename fails (#009)", () => {
+		// A directory at the target path makes renameSync fail after the temp file
+		// was written, which exercises the cleanup path without mocking node:fs.
+		mkdirSync(join(dir, "pi-chafa.json"));
+		expect(() => writeConfigFile(dir, DEFAULT_CONFIG)).toThrow();
+		expect(readdirSync(dir).filter((name) => name.endsWith(".tmp"))).toEqual([]);
 	});
 });
