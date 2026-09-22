@@ -209,7 +209,9 @@ export function summaryText(
 	const head =
 		files.length <= 1
 			? `Showed image ${name} to the user ${label}`
-			: `Showed ${files.length} image(s) to the user ${label}`;
+			: failed > 0
+				? `Showed ${shown.length} of ${files.length} image(s) to the user ${label}`
+				: `Showed ${files.length} image(s) to the user ${label}`;
 	const tail = failed > 0 ? ` ${failed} file(s) could not be shown.` : "";
 	return `${head}.${tail}${noteClause}`;
 }
@@ -371,7 +373,10 @@ export function buildShowImageTool(
 			// runs chafa once per file. Failures are per-file, never batch-fatal.
 			const files: ShowImageFile[] = [];
 			const imageBlocks: Array<{ data: string; mimeType: string }> = [];
-			const payloads: string[] = [];
+			// Per-file payloads are collected as { path, payload } pairs so a label can
+			// never drift out of alignment with its art (#005); the previous parallel
+			// arrays plus a filtered join could mis-pair blocks with names.
+			const payloads: Array<{ path: string; payload: string }> = [];
 			let progress = 0;
 			for (const filePath of matched) {
 				progress += 1;
@@ -437,7 +442,7 @@ export function buildShowImageTool(
 							mode,
 							note,
 						});
-						payloads.push(payload);
+						payloads.push({ path: filePath, payload });
 					}
 				} catch (error) {
 					// A user abort surfaces mid-run (chafa's AbortError); rethrow the
@@ -489,8 +494,17 @@ export function buildShowImageTool(
 			} else {
 				// Symbols delivery: the ANSI payload rides in details only —
 				// never in the model-visible text (spec §4.1.2, §4.1.3, §7.3).
-				const nonEmpty = payloads.filter((payload) => payload !== "");
-				if (nonEmpty.length > 0) details.payload = nonEmpty.join("\n");
+				// A multi-file run labels each block with a sanitized [basename] and
+				// separates blocks with one blank line so the user can tell them apart
+				// (#005); a single file stays unlabeled.
+				const blocks = payloads
+					.filter((entry) => entry.payload !== "")
+					.map((entry) =>
+						matched.length > 1
+							? `[${stripControls(basenameOf(entry.path))}]\n${entry.payload}`
+							: entry.payload,
+					);
+				if (blocks.length > 0) details.payload = blocks.join("\n\n");
 			}
 
 			return { content, details };

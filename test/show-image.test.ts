@@ -128,13 +128,30 @@ describe("summaryText (locked wording, open question 5)", () => {
 		];
 		expect(summaryText(files, "symbols")).toBe("Showed 2 image(s) to the user as ANSI art.");
 	});
-	it("mixed success appends the failure count", () => {
+	it("mixed success reports the shown-of-total count so the header never contradicts the tail (#006)", () => {
 		const files: ShowImageFile[] = [
 			{ path: join(dir, "1.png"), ok: true, mode: "symbols" },
 			{ path: join(dir, "2.png"), ok: false, mode: "symbols", note: "failed to read" },
 		];
 		expect(summaryText(files, "symbols")).toBe(
-			"Showed 2 image(s) to the user as ANSI art. 1 file(s) could not be shown.",
+			"Showed 1 of 2 image(s) to the user as ANSI art. 1 file(s) could not be shown.",
+		);
+	});
+	it("keeps the total-count phrase when every file succeeds (#006)", () => {
+		const files: ShowImageFile[] = [
+			{ path: join(dir, "1.png"), ok: true, mode: "symbols" },
+			{ path: join(dir, "2.png"), ok: true, mode: "symbols" },
+		];
+		expect(summaryText(files, "symbols")).toBe("Showed 2 image(s) to the user as ANSI art.");
+	});
+	it("keeps the Note clause on a mixed-success run (#006)", () => {
+		const files: ShowImageFile[] = [
+			{ path: join(dir, "1.png"), ok: true, mode: "symbols", note: "chafa produced no output" },
+			{ path: join(dir, "2.png"), ok: false, mode: "symbols", note: "failed to read" },
+			{ path: join(dir, "3.png"), ok: false, mode: "symbols", note: "failed to read" },
+		];
+		expect(summaryText(files, "symbols")).toBe(
+			"Showed 1 of 3 image(s) to the user as ANSI art. 2 file(s) could not be shown. Note: chafa produced no output.",
 		);
 	});
 	it("strips control characters from a path in the summary", () => {
@@ -161,7 +178,7 @@ describe("summaryText (locked wording, open question 5)", () => {
 			{ path: join(dir, "2.png"), ok: false, mode: "symbols", note: "failed to read" },
 		];
 		expect(summaryText(files, "symbols")).toBe(
-			"Showed 2 image(s) to the user as ANSI art. 1 file(s) could not be shown.",
+			"Showed 1 of 2 image(s) to the user as ANSI art. 1 file(s) could not be shown.",
 		);
 	});
 });
@@ -414,5 +431,115 @@ describe("show_image execute — forced native with images off degrades with a n
 		expect((result.details as ShowImageDetails).files[0]?.note).toBe(
 			"chafa produced no output",
 		);
+	});
+});
+
+describe("show_image execute — multi-image symbols output (#005)", () => {
+	type Entry = { name: string; payload?: string; fail?: boolean };
+	const ART_A = "\x1b[38;5;1mA\x1b[0m";
+	const ART_B = "\x1b[38;5;2mB\x1b[0m";
+
+	function multiTool(entries: Entry[]) {
+		const paths = entries.map((entry) => join(dir, entry.name));
+		const byPath = new Map(
+			entries.map((entry, index) => [paths[index] as string, entry] as const),
+		);
+		return buildShowImageTool({
+			resolveConfig: (perCall) => resolvedConfig(perCall),
+			readHostImages: (): HostImageSettings => ({
+				showImages: true,
+				imageWidthCells: 60,
+				images: null,
+			}),
+			capsImages: () => null,
+			expandTargets: () => paths,
+			readBytes: async () => Buffer.from(PNG_BASE64, "base64"),
+			sniffMime: () => "image/png",
+			probeChafa: async () => ({
+				binary: "/usr/bin/chafa",
+				version: { major: 1, minor: 18 },
+			}),
+			runChafa: async (_bin, args) => {
+				const entry = byPath.get(args[args.length - 1] as string);
+				if (entry?.fail) throw new Error("chafa exited with an error: boom");
+				return entry?.payload ?? "";
+			},
+			cleanPayload: cleanSymbolsPayload,
+		});
+	}
+
+	it("labels each block and separates them with exactly one blank line", async () => {
+		const tool = multiTool([
+			{ name: "a.png", payload: ART_A },
+			{ name: "b.png", payload: ART_B },
+		]);
+		const result = await tool.execute(
+			"m1",
+			{ glob: "*.png" },
+			neverAbort(),
+			noop as never,
+			makeCtx(true),
+		);
+		const payload = (result.details as ShowImageDetails).payload;
+		expect(payload).toBe(`[a.png]\n${ART_A}\n\n[b.png]\n${ART_B}`);
+		expect(payload?.match(/\n\n/g)).toHaveLength(1);
+	});
+	it("leaves a single-file payload unlabeled", async () => {
+		const tool = multiTool([{ name: "a.png", payload: ART_A }]);
+		const result = await tool.execute(
+			"m2",
+			{ glob: "*.png" },
+			neverAbort(),
+			noop as never,
+			makeCtx(true),
+		);
+		expect((result.details as ShowImageDetails).payload).toBe(ART_A);
+	});
+	it("strips control characters and escapes from the label", async () => {
+		const tool = multiTool([
+			{ name: "a\u001b[31m.png", payload: ART_A },
+			{ name: "b.png", payload: ART_B },
+		]);
+		const result = await tool.execute(
+			"m3",
+			{ glob: "*.png" },
+			neverAbort(),
+			noop as never,
+			makeCtx(true),
+		);
+		const payload = (result.details as ShowImageDetails).payload as string;
+		expect(payload).toContain("[a.png]");
+		expect(payload).not.toContain("\u001b[31m");
+	});
+	it("contributes no block for a file whose chafa run produced nothing", async () => {
+		const tool = multiTool([
+			{ name: "a.png", payload: "" },
+			{ name: "b.png", payload: ART_B },
+		]);
+		const result = await tool.execute(
+			"m4",
+			{ glob: "*.png" },
+			neverAbort(),
+			noop as never,
+			makeCtx(true),
+		);
+		expect((result.details as ShowImageDetails).payload).toBe(`[b.png]\n${ART_B}`);
+	});
+	it("contributes no block for a per-file failure", async () => {
+		const tool = multiTool([
+			{ name: "a.png", payload: ART_A },
+			{ name: "b.png", fail: true },
+			{ name: "c.png", payload: ART_B },
+		]);
+		const result = await tool.execute(
+			"m5",
+			{ glob: "*.png" },
+			neverAbort(),
+			noop as never,
+			makeCtx(true),
+		);
+		const details = result.details as ShowImageDetails;
+		expect(details.payload).toBe(`[a.png]\n${ART_A}\n\n[c.png]\n${ART_B}`);
+		expect(details.files.map((file) => file.ok)).toEqual([true, false, true]);
 	});
 });
