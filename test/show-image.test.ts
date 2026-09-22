@@ -61,6 +61,7 @@ function makeTool(overrides: {
 	showImages?: boolean;
 	format?: "auto" | "native" | "symbols";
 	hasUI?: boolean;
+	columns?: number;
 	runStdout?: string;
 	probeChafa?: ShowImageDeps["probeChafa"];
 	runChafa?: ShowImageDeps["runChafa"];
@@ -91,6 +92,8 @@ function makeTool(overrides: {
 			return Buffer.from(PNG_BASE64, "base64");
 		},
 		sniffMime: overrides.sniffMime ?? (() => "image/png"),
+		// Hermetic viewport: never read the developer's real TTY in tests (#011).
+		terminalColumns: () => overrides.columns,
 		probeChafa:
 			overrides.probeChafa ?? (async () => ({ binary: "/usr/bin/chafa", version: { major: 1, minor: 18 } })),
 		runChafa: overrides.runChafa ?? (async () => overrides.runStdout ?? RAW_ART),
@@ -318,6 +321,92 @@ return { binary: "/usr/bin/chafa", version: { major: 1, minor: 18 } };
 });
 await tool.execute("t20", { path: "pic.png" }, controller.signal, noop as never, ctx);
 expect(seen).toBe(controller.signal);
+});
+});
+
+describe("show_image execute — live width clamp (#011)", () => {
+function captureTool(columns: number | undefined) {
+let args: string[] = [];
+const { tool, ctx } = makeTool({
+capsImages: null,
+columns,
+runChafa: async (_bin, a) => {
+args = a;
+return RAW_ART;
+},
+});
+return { tool, ctx, args: () => args };
+}
+const sizeOf = (args: string[]) => args[args.indexOf("--size") + 1];
+it("clamps cellWidth to columns - 2 and notes the clamp", async () => {
+const { tool, ctx, args } = captureTool(50);
+const result = await tool.execute(
+"c1",
+{ path: "pic.png", cellWidth: 120 },
+neverAbort(),
+noop as never,
+ctx,
+);
+expect(sizeOf(args())).toBe("48x50");
+const details = result.details as ShowImageDetails;
+expect(details.files[0]?.note).toBe(
+"width clamped from 120 to 48 columns to fit the terminal",
+);
+const text = result.content
+.filter((c) => c.type === "text")
+.map((c) => c.text)
+.join("\n");
+expect(text).toContain(
+"Note: width clamped from 120 to 48 columns to fit the terminal.",
+);
+});
+it("leaves the configured width alone when the terminal width is unknown", async () => {
+const { tool, ctx, args } = captureTool(undefined);
+const result = await tool.execute(
+"c2",
+{ path: "pic.png", cellWidth: 120 },
+neverAbort(),
+noop as never,
+ctx,
+);
+expect(sizeOf(args())).toBe("120x50");
+expect((result.details as ShowImageDetails).files[0]?.note).toBeUndefined();
+});
+it("does not clamp for a terminal below the 8-column guard", async () => {
+const { tool, ctx, args } = captureTool(5);
+const result = await tool.execute(
+"c3",
+{ path: "pic.png", cellWidth: 120 },
+neverAbort(),
+noop as never,
+ctx,
+);
+expect(sizeOf(args())).toBe("120x50");
+expect((result.details as ShowImageDetails).files[0]?.note).toBeUndefined();
+});
+it("does not clamp when the configured width already fits", async () => {
+const { tool, ctx, args } = captureTool(200);
+const result = await tool.execute(
+"c4",
+{ path: "pic.png", cellWidth: 120 },
+neverAbort(),
+noop as never,
+ctx,
+);
+expect(sizeOf(args())).toBe("120x50");
+expect((result.details as ShowImageDetails).files[0]?.note).toBeUndefined();
+});
+it("leaves colors and symbolsSet untouched by the clamp", async () => {
+const { tool, ctx, args } = captureTool(50);
+await tool.execute(
+"c5",
+{ path: "pic.png", cellWidth: 120, colors: "16", symbolsSet: "block" },
+neverAbort(),
+noop as never,
+ctx,
+);
+expect(args()).toContain("16");
+expect(args()).toContain("block");
 });
 });
 

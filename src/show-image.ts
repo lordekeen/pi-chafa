@@ -93,6 +93,8 @@ export interface ShowImageDeps {
 		opts: { timeoutMs: number; signal?: AbortSignal },
 	) => Promise<string>;
 	cleanPayload: (raw: string) => string;
+	/** Live viewport width in columns, when known (#011). */
+	terminalColumns: () => number | undefined;
 }
 
 function defaultDeps(): ShowImageDeps {
@@ -120,6 +122,11 @@ function defaultDeps(): ShowImageDeps {
 		probeChafa: (binaryPath, signal) => cachedProbe(binaryPath, signal),
 		runChafa,
 		cleanPayload: cleanSymbolsPayload,
+		// Mirrors pi-tui's own source: the TTY width, else COLUMNS, else unknown.
+		terminalColumns: () => {
+			const cols = process.stdout.columns || Number(process.env.COLUMNS);
+			return Number.isFinite(cols) && cols > 0 ? cols : undefined;
+		},
 	};
 }
 
@@ -348,6 +355,26 @@ export function buildShowImageTool(
 			};
 			const resolved = d.resolveConfig(overrides);
 
+			// Live width clamp for the symbols path (spec §7.3, #011). chafa runs
+			// during execute, so this is the last point where the viewport is known;
+			// a resize after it cannot be repaired (accepted limitation, spec §13
+			// OQ2). Below the 8-column guard the terminal is too narrow to draw art,
+			// so the configured width is left alone rather than clamped to nothing.
+			const requestedWidth = resolved.symbols.cellWidth;
+			const columns = d.terminalColumns();
+			const effectiveWidth =
+				typeof columns === "number" && Number.isFinite(columns) && columns >= 8
+					? Math.min(requestedWidth, columns - 2)
+					: requestedWidth;
+			const widthClampNote =
+				effectiveWidth < requestedWidth
+					? `width clamped from ${requestedWidth} to ${effectiveWidth} columns to fit the terminal`
+					: undefined;
+			const symbolsSettings = {
+				...resolved.symbols,
+				cellWidth: effectiveWidth,
+			};
+
 			// Step 3 — capability decision (spec §5.1, §7.2). decideDelivery
 			// throws for a forced format=native this session cannot render.
 			const mode: DeliveryMode = decideDelivery({
@@ -421,7 +448,7 @@ export function buildShowImageTool(
 						// args, bounded exec, cleaned payload.
 						const stdout = await d.runChafa(
 							chafaBinary,
-							buildSymbolsArgs(filePath, resolved.symbols),
+							buildSymbolsArgs(filePath, symbolsSettings),
 							{ timeoutMs: resolved.symbols.timeoutMs, signal },
 						);
 						const payload = d.cleanPayload(stdout);
@@ -432,6 +459,10 @@ export function buildShowImageTool(
 							note = "chafa produced no output";
 						} else if (rows >= maxRows) {
 							note = `output capped at maxRows=${maxRows} rows; the image was scaled down to fit`;
+						} else if (widthClampNote) {
+							// Less specific than an output/limitation note above; more
+							// specific than the forced-native degrade below.
+							note = widthClampNote;
 						} else if (nativeDegraded) {
 							// More specific per-file notes above take precedence.
 							note = NATIVE_OFF_NOTE;

@@ -86,7 +86,7 @@ Either override is now honoured directly by pi-chafa, so `show_image` works even
 | Key | Type | Default | Meaning |
 |---|---|---|---|
 | `preferNative` | boolean | `true` | Prefer kitty/iTerm2 whenever supported; `false` forces Chafa symbols even on native terminals. |
-| `cellWidth` | integer | `60` | Chafa width in columns (not clamped to live terminal width in v1). |
+| `cellWidth` | integer | `60` | Chafa width in columns. Defaults from pi's `terminal.imageWidthCells` when unset here and `CHAFA_CELL_WIDTH` is unset; clamped to the live terminal width minus 2 when the viewport is narrower (a note records the clamp). |
 | `maxRows` | integer | `50` | Chafa `--size` row cap for symbols output. When the cap binds, the result notes it (`output capped at maxRows=N rows`). |
 | `colors` | enum | `240` | `none\|2\|8\|16\|240\|256\|full`. |
 | `symbolsSet` | string | `block+border` | Chafa `--symbols` class list; classes depend on your chafa version. |
@@ -99,7 +99,7 @@ Unknown keys and invalid values are skipped silently. Copy `pi-chafa.example.jso
 
 ## Environment variables
 
-Precedence is always **tool params > `CHAFA_*` env > config file > defaults**.
+Precedence is always **tool params > `CHAFA_*` env > config file > defaults** (for `cellWidth`, pi's `terminal.imageWidthCells` fills in when all three are silent).
 
 | Env | Maps to | Notes |
 |---|---|---|
@@ -109,7 +109,7 @@ Precedence is always **tool params > `CHAFA_*` env > config file > defaults**.
 | `CHAFA_COLORS` | `colors` | `none\|2\|8\|16\|240\|256\|full`. |
 | `CHAFA_SYMBOLS` | `symbolsSet` | Symbol class list. |
 | `CHAFA_DITHER` | `dither` | `none\|ordered\|diffusion\|noise`. |
-| `CHAFA_PREFER_NATIVE` | `preferNative` | `1\|0`. |
+| `CHAFA_PREFER_NATIVE` | `preferNative` | `1\|0` plus `true\|false\|yes\|no\|on\|off` (case-insensitive, trimmed). |
 | `CHAFA_TIMEOUT_MS` | `timeoutMs` | Integer ms. |
 | `CHAFA_CONFIG_DIR` | config location | Override for `pi-chafa.json`; defaults to `~/.pi/agent`. |
 
@@ -118,7 +118,7 @@ pi's image capability is resolved (read-only) through an explicit ladder, in pri
 ## Limitations (v1)
 
 - Animated files show a **still frame** (`--animate off`).
-- Symbols width is not clamped to the live terminal width (config `cellWidth` only).
+- Symbols width is clamped to the live terminal width (`columns - 2`) when the viewport is known; the clamp is a heuristic and cannot react to a resize that lands after rendering.
 - No sixel — see the upstream pi TUI sixel proposal (docs/spec/2026-09-03-pi-tui-sixel-support-proposal.md) for the protocol roadmap.
 - Not a `read` override; pi-pretty's `read` may be preferable on native terminals (see the bundled skill).
 - On native terminals (kitty/iTerm2), a file that is not a recognized image format is a per-file error (`format="symbols"` may still render it via Chafa) — no image block is emitted, since a host-unrenderable block would be persisted in session history and rejected by providers on every later turn.

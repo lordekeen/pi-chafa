@@ -2,7 +2,7 @@ import { mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import type { ChafaConfig } from "../src/types.js";
+import type { ChafaConfig, HostImageSettings } from "../src/types.js";
 import {
 	CHAFA_ENV_KEYS,
 	DEFAULT_CONFIG,
@@ -94,13 +94,35 @@ describe("applyEnv (env > file > defaults)", () => {
 		expect(cfg.colors).toBe(DEFAULT_CONFIG.colors);
 		expect(cfg.preferNative).toBe(true);
 	});
+	it("accepts the extended boolean vocabulary case-insensitively and trimmed (#004)", () => {
+		writeFileSync(join(dir, "pi-chafa.json"), JSON.stringify({ preferNative: false }));
+		for (const value of ["1", "true", "TRUE", " True ", "yes", "YES", "on", "On"]) {
+			process.env.CHAFA_PREFER_NATIVE = value;
+			expect(applyEnv(loadConfig(dir)).preferNative).toBe(true);
+		}
+		writeFileSync(join(dir, "pi-chafa.json"), JSON.stringify({ preferNative: true }));
+		for (const value of ["0", "false", "FALSE", " False ", "no", "NO", "off", "Off"]) {
+			process.env.CHAFA_PREFER_NATIVE = value;
+			expect(applyEnv(loadConfig(dir)).preferNative).toBe(false);
+		}
+	});
+	it("ignores unrecognized or empty boolean values and falls back to the file (#004)", () => {
+		writeFileSync(join(dir, "pi-chafa.json"), JSON.stringify({ preferNative: false }));
+		for (const value of ["maybe", "2", "", "   "]) {
+			process.env.CHAFA_PREFER_NATIVE = value;
+			expect(applyEnv(loadConfig(dir)).preferNative).toBe(false);
+		}
+	});
 });
 
 describe("resolveConfig precedence", () => {
+	// Hermetic host settings (spec §6.4): tests must never read the developer's
+	// real ~/.pi/agent/settings.json, so every resolveConfig call injects one.
+	const HOST_60: HostImageSettings = { showImages: true, imageWidthCells: 60, images: null };
 	it("lays per-call overrides above env above file above defaults", () => {
 		writeFileSync(join(dir, "pi-chafa.json"), JSON.stringify({ cellWidth: 40, colors: "8" }));
 		process.env.CHAFA_CELL_WIDTH = "80";
-		const resolved = resolveConfig({ cellWidth: 100, colors: "full" }, dir);
+		const resolved = resolveConfig({ cellWidth: 100, colors: "full" }, dir, HOST_60);
 		expect(resolved.symbols.cellWidth).toBe(100);
 		expect(resolved.symbols.colors).toBe("full");
 		expect(resolved.preferNative).toBe(true);
@@ -108,15 +130,47 @@ describe("resolveConfig precedence", () => {
 		expect(resolved.symbols.timeoutMs).toBe(DEFAULT_CONFIG.timeoutMs);
 	});
 	it("falls back to config when a per-call symbolsSet is blank or whitespace (spec §4.1.1/§6.3)", () => {
-		expect(resolveConfig({ symbolsSet: "" }, dir).symbols.symbolsSet).toBe(
+		expect(resolveConfig({ symbolsSet: "" }, dir, HOST_60).symbols.symbolsSet).toBe(
 			DEFAULT_CONFIG.symbolsSet,
 		);
-		expect(resolveConfig({ symbolsSet: "   " }, dir).symbols.symbolsSet).toBe(
+		expect(resolveConfig({ symbolsSet: "   " }, dir, HOST_60).symbols.symbolsSet).toBe(
 			DEFAULT_CONFIG.symbolsSet,
 		);
 	});
 	it("uses the trimmed per-call symbolsSet override", () => {
-		expect(resolveConfig({ symbolsSet: "  block  " }, dir).symbols.symbolsSet).toBe("block");
+		expect(resolveConfig({ symbolsSet: "  block  " }, dir, HOST_60).symbols.symbolsSet).toBe("block");
+	});
+});
+
+describe("resolveConfig host cellWidth layer (#010)", () => {
+	const host = (imageWidthCells: number): HostImageSettings => ({
+		showImages: true,
+		imageWidthCells,
+		images: null,
+	});
+	it("uses the host terminal.imageWidthCells when file and env are silent", () => {
+		expect(resolveConfig({}, dir, host(80)).symbols.cellWidth).toBe(80);
+	});
+	it("prefers an explicit file cellWidth over the host width (provenance case)", () => {
+		writeFileSync(join(dir, "pi-chafa.json"), JSON.stringify({ cellWidth: 60 }));
+		expect(resolveConfig({}, dir, host(80)).symbols.cellWidth).toBe(60);
+	});
+	it("prefers CHAFA_CELL_WIDTH over both the file and the host width", () => {
+		writeFileSync(join(dir, "pi-chafa.json"), JSON.stringify({ cellWidth: 60 }));
+		process.env.CHAFA_CELL_WIDTH = "40";
+		expect(resolveConfig({}, dir, host(80)).symbols.cellWidth).toBe(40);
+	});
+	it("prefers a per-call cellWidth over everything", () => {
+		writeFileSync(join(dir, "pi-chafa.json"), JSON.stringify({ cellWidth: 60 }));
+		process.env.CHAFA_CELL_WIDTH = "40";
+		expect(resolveConfig({ cellWidth: 30 }, dir, host(80)).symbols.cellWidth).toBe(30);
+	});
+	it("falls back to the built-in default when the host width is not usable", () => {
+		expect(resolveConfig({}, dir, host(0)).symbols.cellWidth).toBe(DEFAULT_CONFIG.cellWidth);
+	});
+	it("does not treat an invalid file cellWidth as explicit", () => {
+		writeFileSync(join(dir, "pi-chafa.json"), JSON.stringify({ cellWidth: -5 }));
+		expect(resolveConfig({}, dir, host(80)).symbols.cellWidth).toBe(80);
 	});
 });
 

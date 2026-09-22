@@ -130,21 +130,35 @@ export function validateConfig(raw: unknown): Partial<ChafaConfig> {
 	return out;
 }
 
-/** Load + validate pi-chafa.json; missing/corrupt file falls back to defaults. Re-read per call (pi-pretty pattern). */
-export function loadConfig(agentDir: string = getConfigDir()): ChafaConfig {
-	const config: ChafaConfig = {
-		...DEFAULT_CONFIG,
-		formatOrder: [...DEFAULT_CONFIG.formatOrder],
-	};
-	if (!agentDir) return config;
+/**
+ * Load + validate pi-chafa.json and report which keys were explicitly present
+ * *and valid*. The key set is what lets `resolveConfig` tell "cellWidth absent"
+ * (host `terminal.imageWidthCells` may supply the default) apart from
+ * "cellWidth explicitly set to the value the default would also produce"
+ * (#010). Missing/corrupt file → empty partial + empty key set.
+ */
+export function loadFileConfig(agentDir: string = getConfigDir()): {
+	config: Partial<ChafaConfig>;
+	keys: Set<string>;
+} {
+	if (!agentDir) return { config: {}, keys: new Set() };
 	let raw: unknown;
 	try {
 		raw = JSON.parse(readFileSync(join(agentDir, "pi-chafa.json"), "utf8"));
 	} catch {
-		return config;
+		return { config: {}, keys: new Set() };
 	}
-	const validated = validateConfig(raw);
-	return { ...config, ...validated };
+	const config = validateConfig(raw);
+	return { config, keys: new Set(Object.keys(config)) };
+}
+
+/** Load + validate pi-chafa.json; missing/corrupt file falls back to defaults. Re-read per call (pi-pretty pattern). */
+export function loadConfig(agentDir: string = getConfigDir()): ChafaConfig {
+	const base: ChafaConfig = {
+		...DEFAULT_CONFIG,
+		formatOrder: [...DEFAULT_CONFIG.formatOrder],
+	};
+	return { ...base, ...loadFileConfig(agentDir).config };
 }
 
 function envValue(name: string): string | undefined {
@@ -161,10 +175,17 @@ function envPositiveInt(name: string): number | undefined {
 }
 
 function envBoolean(name: string): boolean | undefined {
-	const value = envValue(name);
+	const value = envValue(name)?.toLowerCase();
 	if (value === undefined) return undefined;
-	if (value === "1") return true;
-	if (value === "0") return false;
+	// Extended vocabulary (#004, decision D6): 1/0 plus true/false/yes/no/on/off,
+	// case-insensitive and trimmed. Anything else stays silently ignored so a
+	// typo falls back to the file/default rather than flipping behavior.
+	if (value === "1" || value === "true" || value === "yes" || value === "on") {
+		return true;
+	}
+	if (value === "0" || value === "false" || value === "no" || value === "off") {
+		return false;
+	}
 	return undefined;
 }
 
@@ -199,9 +220,30 @@ export function applyEnv(config: ChafaConfig): ChafaConfig {
 export function resolveConfig(
 	overrides: ChafaOverrides = {},
 	agentDir: string = getConfigDir(),
+	// Injected for hermetic tests (spec §6.4): the default reads pi's real
+	// ~/.pi/agent/settings.json, so unit tests must pass an explicit value.
+	hostSettings: HostImageSettings = readHostImageSettings(),
 ): ResolvedConfig {
-	const fromFile = loadConfig(agentDir);
+	const { config: fileConfig, keys } = loadFileConfig(agentDir);
+	const fromFile: ChafaConfig = {
+		...DEFAULT_CONFIG,
+		formatOrder: [...DEFAULT_CONFIG.formatOrder],
+		...fileConfig,
+	};
 	const cfg = applyEnv(fromFile);
+	// cellWidth precedence (#010): per-call param → CHAFA_CELL_WIDTH → an
+	// explicitly present pi-chafa.json value → host terminal.imageWidthCells →
+	// built-in default. The host layer fills in only when the file never
+	// mentioned cellWidth; env is detected separately because applyEnv has
+	// already folded it into cfg.
+	const envCellWidth = envPositiveInt("CHAFA_CELL_WIDTH");
+	const fileCellWidth = keys.has("cellWidth") ? cfg.cellWidth : undefined;
+	const cellWidth =
+		overrides.cellWidth ??
+		envCellWidth ??
+		fileCellWidth ??
+		positiveInt(hostSettings.imageWidthCells) ??
+		DEFAULT_CONFIG.cellWidth;
 	// Per-call symbolsSet must trim to non-empty like the config-file rule
 	// (validateConfig above); an empty/whitespace override would otherwise
 	// reach chafa as `--symbols ""` (spec §4.1.1 / §6.3).
@@ -211,7 +253,7 @@ export function resolveConfig(
 			? overrides.symbolsSet.trim()
 			: cfg.symbolsSet;
 	const symbols: EffectiveSymbolsSettings = {
-		cellWidth: overrides.cellWidth ?? cfg.cellWidth,
+		cellWidth,
 		maxRows: cfg.maxRows,
 		colors: overrides.colors ?? cfg.colors,
 		symbolsSet,
