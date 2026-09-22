@@ -108,17 +108,40 @@ function installHint(binary: string): string {
 	return `chafa was not found on PATH (looked for ${binary}). Install it with: ${hint}. Or set CHAFA_BIN to its absolute path.`;
 }
 
+/** Resolve the chafa binary name/path: explicit config ``CHafa_BIN`` else "chafa". */
+export function resolveChafaBinary(binaryPath: string | null): string {
+	return binaryPath && binaryPath.trim() !== "" ? binaryPath.trim() : "chafa";
+}
+
+/**
+ * The error an aborted probe must surface: the signal's own reason when it is
+ * an Error (Node's DOMException AbortError carries name + code), else a
+ * synthesized AbortError so callers can classify the cancellation
+ * (AGENTS.md invariant 4).
+ */
+function abortReason(signal: AbortSignal): Error {
+	const reason = signal.reason;
+	if (reason instanceof Error) return reason;
+	const err = new Error("chafa probe was aborted") as Error & { code?: string };
+	err.name = "AbortError";
+	err.code = "ABORT_ERR";
+	return err;
+}
+
 /**
  * Resolve the chafa binary (CHAFA_BIN/config binaryPath else "chafa" on PATH)
  * and verify its version meets MIN_CHAFA_VERSION. Throws actionable errors.
  * `execOverride` exists for tests; production uses node:child_process.
+ * `signal` (#008) is forwarded into the `--version` exec and an abort rejects
+ * with the original AbortError rather than a wrapped probe failure.
  */
 export async function probeChafa(
 	binaryPath: string | null,
 	execOverride?: ExecFn,
+	signal?: AbortSignal,
 ): Promise<ChafaProbe> {
-	const binary =
-		binaryPath && binaryPath.trim() !== "" ? binaryPath.trim() : "chafa";
+	const binary = resolveChafaBinary(binaryPath);
+	if (signal?.aborted) throw abortReason(signal);
 	const execFn: ExecFn =
 		execOverride ??
 		((bin, args, opts) => nodeExecFile(bin, args, opts as never));
@@ -126,13 +149,23 @@ export async function probeChafa(
 	try {
 		const result = await execFn(binary, ["--version"], {
 			timeout: 3000,
+			signal,
 			encoding: "utf8",
 			maxBuffer: 1024 * 1024,
 		});
 		stdout = result.stdout;
 	} catch (error) {
-		const code = (error as NodeJS.ErrnoException).code;
-		if (code === "ENOENT") throw new Error(installHint(binary));
+		const err = error as NodeJS.ErrnoException;
+		// A user abort must stay classifiable — never wrapped into a generic
+		// probe failure (AGENTS.md invariant 4).
+		if (
+			err?.name === "AbortError" ||
+			err?.code === "ABORT_ERR" ||
+			signal?.aborted
+		) {
+			throw error;
+		}
+		if (err.code === "ENOENT") throw new Error(installHint(binary));
 		throw new Error(
 			`Failed to run ${binary} --version: ${(error as Error).message}`,
 		);
@@ -159,6 +192,40 @@ export async function probeChafa(
 		);
 	}
 	return { binary, version };
+}
+
+/** The `probeChafa` call signature plus the test-only cache reset. */
+export interface CachedChafaProbe {
+	(binaryPath: string | null, signal?: AbortSignal): Promise<ChafaProbe>;
+	clear(): void;
+}
+
+/**
+ * Memoize successful `probeChafa` results per resolved binary path (#007).
+ * Real rejections (missing binary, wrong version, unparseable output) are
+ * never cached, so a missing-then-installed chafa recovers on the next call.
+ * The in-flight promise is cached, so concurrent calls share one exec.
+ * An already-aborted signal short-circuits before the cache is consulted — a
+ * cached success must never mask an abort (#008). `clear()` is for tests.
+ */
+export function createCachedProbe(execOverride?: ExecFn): CachedChafaProbe {
+	const cache = new Map<string, Promise<ChafaProbe>>();
+	const probe = ((binaryPath: string | null, signal?: AbortSignal) => {
+		if (signal?.aborted) return Promise.reject(abortReason(signal));
+		const key = resolveChafaBinary(binaryPath);
+		const hit = cache.get(key);
+		if (hit) return hit;
+		const fresh = probeChafa(binaryPath, execOverride, signal).catch(
+			(error: unknown) => {
+				cache.delete(key);
+				throw error;
+			},
+		);
+		cache.set(key, fresh);
+		return fresh;
+	}) as CachedChafaProbe;
+	probe.clear = () => cache.clear();
+	return probe;
 }
 
 /**

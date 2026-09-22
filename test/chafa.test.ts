@@ -4,6 +4,7 @@ import {
 	MIN_CHAFA_VERSION,
 	buildSymbolsArgs,
 	cleanSymbolsPayload,
+	createCachedProbe,
 	probeChafa,
 	runChafa,
 } from "../src/chafa.js";
@@ -91,6 +92,98 @@ describe("probeChafa", () => {
 		await expect(probeChafa(null, mockExec as never)).rejects.toThrow(
 			new RegExp(`${MIN_CHAFA_VERSION.major}\\.${MIN_CHAFA_VERSION.minor}`),
 		);
+	});
+	it("forwards the abort signal into the version exec (#008)", async () => {
+		let seen: unknown;
+		const mockExec = vi.fn(async (_bin, _args, opts) => {
+			seen = (opts as { signal?: AbortSignal }).signal;
+			return { stdout: "Chafa version 1.18.2\n", stderr: "" };
+		});
+		const controller = new AbortController();
+		await probeChafa(null, mockExec as never, controller.signal);
+		expect(seen).toBe(controller.signal);
+	});
+	it("rethrows an abort from the version exec instead of wrapping it (#008)", async () => {
+		const mockExec = vi.fn(async () => {
+			const err = new Error("The operation was aborted") as Error & { code?: string };
+			err.name = "AbortError";
+			err.code = "ABORT_ERR";
+			throw err;
+		});
+		const err = await probeChafa(null, mockExec as never).then(
+			() => undefined,
+			(e: unknown) => e,
+		);
+		expect((err as Error).name).toBe("AbortError");
+	});
+});
+
+describe("createCachedProbe (#007, #008)", () => {
+	const okExec = () => ({ stdout: "Chafa version 1.18.2\n", stderr: "" });
+	it("memoizes a successful probe by resolved binary path", async () => {
+		const mockExec = vi.fn(async () => okExec());
+		const cached = createCachedProbe(mockExec as never);
+		const first = await cached(null);
+		const second = await cached("chafa");
+		expect(mockExec).toHaveBeenCalledTimes(1);
+		expect(second).toEqual(first);
+		expect(first.binary).toBe("chafa");
+	});
+	it("caches a different key per explicit binaryPath", async () => {
+		const mockExec = vi.fn(async () => okExec());
+		const cached = createCachedProbe(mockExec as never);
+		await cached("/opt/chafa");
+		await cached("/opt/chafa");
+		await cached(null);
+		expect(mockExec).toHaveBeenCalledTimes(2);
+	});
+	it("shares a single exec across concurrent calls", async () => {
+		let calls = 0;
+		const mockExec = vi.fn(async () => {
+			calls++;
+			await new Promise((resolve) => setTimeout(resolve, 5));
+			return okExec();
+		});
+		const cached = createCachedProbe(mockExec as never);
+		await Promise.all([cached(null), cached(null)]);
+		expect(calls).toBe(1);
+	});
+	it("never caches a rejection, so a missing-then-installed chafa recovers", async () => {
+		let calls = 0;
+		const mockExec = vi.fn(async () => {
+			calls++;
+			if (calls === 1) {
+				const err = new Error("spawn chafa ENOENT") as NodeJS.ErrnoException;
+				err.code = "ENOENT";
+				throw err;
+			}
+			return okExec();
+		});
+		const cached = createCachedProbe(mockExec as never);
+		await expect(cached(null)).rejects.toThrow(/not found/);
+		await expect(cached(null)).resolves.toMatchObject({ binary: "chafa" });
+		expect(mockExec).toHaveBeenCalledTimes(2);
+	});
+	it("clear() drops the cached success", async () => {
+		const mockExec = vi.fn(async () => okExec());
+		const cached = createCachedProbe(mockExec as never);
+		await cached(null);
+		cached.clear();
+		await cached(null);
+		expect(mockExec).toHaveBeenCalledTimes(2);
+	});
+	it("rejects promptly for an already-aborted signal without spawning", async () => {
+		const mockExec = vi.fn(async () => okExec());
+		const cached = createCachedProbe(mockExec as never);
+		await cached(null); // prime the cache: an abort must not be masked by it
+		const controller = new AbortController();
+		controller.abort();
+		const err = await cached(null, controller.signal).then(
+			() => undefined,
+			(e: unknown) => e,
+		);
+		expect((err as Error).name).toBe("AbortError");
+		expect(mockExec).toHaveBeenCalledTimes(1);
 	});
 });
 
