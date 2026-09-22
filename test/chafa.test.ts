@@ -161,6 +161,25 @@ describe("probeChafa", () => {
 
 describe("createCachedProbe (#007, #008)", () => {
 	const okExec = () => ({ stdout: "Chafa version 1.18.2\n", stderr: "" });
+	/** A fake exec that honours an abort the way the real execFile does. */
+	const abortableExec = (gate: Promise<void>) =>
+		vi.fn((_bin: string, _args: string[], opts?: { signal?: AbortSignal }) =>
+			Promise.race([
+				gate,
+				new Promise((_resolve, reject) => {
+					opts?.signal?.addEventListener(
+						"abort",
+						() => {
+							const err = new Error("aborted") as Error & { code?: string };
+							err.name = "AbortError";
+							err.code = "ABORT_ERR";
+							reject(err);
+						},
+						{ once: true },
+					);
+				}),
+			]).then(() => okExec()),
+		);
 	it("memoizes a successful probe by resolved binary path", async () => {
 		const mockExec = vi.fn(async () => okExec());
 		const cached = createCachedProbe(mockExec as never);
@@ -224,6 +243,47 @@ describe("createCachedProbe (#007, #008)", () => {
 			(e: unknown) => e,
 		);
 		expect((err as Error).name).toBe("AbortError");
+		expect(mockExec).toHaveBeenCalledTimes(1);
+	});
+	it("does not let one caller's abort reject another sharing the in-flight probe (#020)", async () => {
+		let release: (() => void) | undefined;
+		const gate = new Promise<void>((resolve) => {
+			release = resolve;
+		});
+		const mockExec = abortableExec(gate);
+		const cached = createCachedProbe(mockExec as never);
+		const controller = new AbortController();
+		const withSignal = cached(null, controller.signal); // starts the shared probe
+		const joined = cached(null); // joins it, without a signal of its own
+		controller.abort();
+		await expect(withSignal).rejects.toMatchObject({ name: "AbortError" });
+		release?.();
+		// B never aborted, so A's cancellation must not reach it.
+		await expect(joined).resolves.toMatchObject({ binary: "chafa" });
+		expect(mockExec).toHaveBeenCalledTimes(1);
+	});
+	it("rejects a caller promptly on its own abort while a shared probe is in flight (#020)", async () => {
+		let release: (() => void) | undefined;
+		const gate = new Promise<void>((resolve) => {
+			release = resolve;
+		});
+		const mockExec = abortableExec(gate);
+		const cached = createCachedProbe(mockExec as never);
+		const controller = new AbortController();
+		const shared = cached(null); // signal-free: nobody can cancel it
+		const aborting = cached(null, controller.signal); // joins, then aborts
+		controller.abort();
+		// Prompt rejection must not wait for the shared probe to settle.
+		const outcome = await Promise.race([
+			aborting.then(
+				() => "resolved",
+				(e: unknown) => (e as Error).name,
+			),
+			new Promise<string>((resolve) => setTimeout(() => resolve("pending"), 50)),
+		]);
+		expect(outcome).toBe("AbortError");
+		release?.();
+		await expect(shared).resolves.toMatchObject({ binary: "chafa" });
 		expect(mockExec).toHaveBeenCalledTimes(1);
 	});
 });

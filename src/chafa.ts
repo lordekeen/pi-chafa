@@ -108,7 +108,7 @@ function installHint(binary: string): string {
 	return `chafa was not found on PATH (looked for ${binary}). Install it with: ${hint}. Or set CHAFA_BIN to its absolute path.`;
 }
 
-/** Resolve the chafa binary name/path: explicit config ``CHafa_BIN`` else "chafa". */
+/** Resolve the chafa binary name/path: explicit config ``CHAFA_BIN`` else "chafa". */
 export function resolveChafaBinary(binaryPath: string | null): string {
 	return binaryPath && binaryPath.trim() !== "" ? binaryPath.trim() : "chafa";
 }
@@ -126,6 +126,32 @@ function abortReason(signal: AbortSignal): Error {
 	err.name = "AbortError";
 	err.code = "ABORT_ERR";
 	return err;
+}
+
+/**
+ * Reject as soon as `signal` aborts instead of waiting for `promise` — used by
+ * callers that joined a shared probe which does not carry their signal (#020).
+ * The underlying probe keeps running and still caches its result, while the
+ * caller gets the prompt rejection #008 requires.
+ */
+function raceAbort<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
+	return new Promise<T>((resolve, reject) => {
+		const onAbort = () => {
+			signal.removeEventListener("abort", onAbort);
+			reject(abortReason(signal));
+		};
+		signal.addEventListener("abort", onAbort, { once: true });
+		promise.then(
+			(value) => {
+				signal.removeEventListener("abort", onAbort);
+				resolve(value);
+			},
+			(error: unknown) => {
+				signal.removeEventListener("abort", onAbort);
+				reject(error);
+			},
+		);
+	});
 }
 
 /**
@@ -230,15 +256,20 @@ export function createCachedProbe(execOverride?: ExecFn): CachedChafaProbe {
 		if (signal?.aborted) return Promise.reject(abortReason(signal));
 		const key = resolveChafaBinary(binaryPath);
 		const hit = cache.get(key);
-		if (hit) return hit;
-		const fresh = probeChafa(binaryPath, execOverride, signal).catch(
+		if (hit) return signal ? raceAbort(hit, signal) : hit;
+		// The shared probe is started WITHOUT the caller's signal: it must stay
+		// caller-independent, or one caller's abort would reject every caller that
+		// joined the same in-flight promise (#020). Callers that supplied a signal
+		// still reject promptly through raceAbort, and the probe itself stays
+		// bounded by probeChafa's own timeout.
+		const fresh = probeChafa(binaryPath, execOverride, undefined).catch(
 			(error: unknown) => {
 				cache.delete(key);
 				throw error;
 			},
 		);
 		cache.set(key, fresh);
-		return fresh;
+		return signal ? raceAbort(fresh, signal) : fresh;
 	}) as CachedChafaProbe;
 	probe.clear = () => cache.clear();
 	return probe;
