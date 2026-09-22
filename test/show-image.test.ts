@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { cleanSymbolsPayload } from "../src/chafa.js";
 import { DEFAULT_CONFIG } from "../src/config.js";
-import { resolveCapsImages } from "../src/detect.js";
+import { NATIVE_SAFE_MIMES, resolveCapsImages } from "../src/detect.js";
 import {
 	buildShowImageTool,
 	summaryText,
@@ -640,5 +640,134 @@ describe("show_image execute — multi-image symbols output (#005)", () => {
 		const details = result.details as ShowImageDetails;
 		expect(details.payload).toBe(`[a.png]\n${ART_A}\n\n[c.png]\n${ART_B}`);
 		expect(details.files.map((file) => file.ok)).toEqual([true, false, true]);
+	});
+});
+
+describe("show_image execute — mime-aware delivery (#014/#015)", () => {
+	const CHAFA = { binary: "/usr/bin/chafa", version: { major: 1, minor: 18 } };
+	const ALL_LOADERS = ["PNG", "SVG", "AVIF", "BMP", "ICO"];
+
+	it("degrades an SVG to symbols on a native session, with no image block and a note", async () => {
+		const { tool, ctx } = makeTool({
+			capsImages: "kitty",
+			sniffMime: () => "image/svg+xml",
+			probeChafa: async () => ({ ...CHAFA, loaders: ["PNG", "SVG"] }),
+		});
+		const result = await tool.execute("v1", { path: "pic.png" }, neverAbort(), noop as never, ctx);
+		expect(result.content.some((c) => c.type === "image")).toBe(false);
+		const details = result.details as ShowImageDetails;
+		expect(details.mode).toBe("native");
+		expect(details.files[0]?.mode).toBe("symbols");
+		expect(details.files[0]?.mimeType).toBe("image/svg+xml");
+		expect(details.files[0]?.note).toBe(
+			"showing SVG as ANSI art; native SVG preview needs a rasterizer",
+		);
+		expect(details.payload).toBe(CLEAN_ART);
+		const text = result.content
+			.filter((c) => c.type === "text")
+			.map((c) => c.text)
+			.join("\n");
+		expect(text).toContain(
+			"Note: showing SVG as ANSI art; native SVG preview needs a rasterizer.",
+		);
+	});
+	it("refuses a forced-native SVG with an actionable per-file error, without probing chafa", async () => {
+		const { tool, ctx } = makeTool({
+			capsImages: "kitty",
+			sniffMime: () => "image/svg+xml",
+			probeChafa: async () => {
+				throw new Error("chafa must not be probed for a forced-native unsafe mime");
+			},
+		});
+		await expect(
+			tool.execute("v2", { path: "pic.png", format: "native" }, neverAbort(), noop as never, ctx),
+		).rejects.toThrow(/cannot be delivered as a native image block/);
+	});
+	it("errors per file when the chafa build lacks the format's loader", async () => {
+		const { tool, ctx } = makeTool({
+			capsImages: null,
+			sniffMime: () => "image/bmp",
+			probeChafa: async () => ({ ...CHAFA, loaders: ["PNG", "SVG"] }),
+		});
+		await expect(
+			tool.execute("v3", { path: "pic.png" }, neverAbort(), noop as never, ctx),
+		).rejects.toThrow(/BMP loader/);
+	});
+	it("attempts a recognized format when the loader list is unknown (null)", async () => {
+		const { tool, ctx } = makeTool({
+			capsImages: null,
+			sniffMime: () => "image/bmp",
+			probeChafa: async () => ({ ...CHAFA, loaders: null }),
+		});
+		const result = await tool.execute("v4", { path: "pic.png" }, neverAbort(), noop as never, ctx);
+		const details = result.details as ShowImageDetails;
+		expect(details.files[0]?.ok).toBe(true);
+		expect(details.files[0]?.note).toBeUndefined();
+		expect(details.payload).toBe(CLEAN_ART);
+	});
+	it("never probes chafa for a native-safe mime on a native session", async () => {
+		let probes = 0;
+		const { tool, ctx } = makeTool({
+			capsImages: "kitty",
+			probeChafa: async () => {
+				probes += 1;
+				return { ...CHAFA, loaders: null };
+			},
+		});
+		await tool.execute("v5", { path: "pic.png" }, neverAbort(), noop as never, ctx);
+		expect(probes).toBe(0);
+	});
+	it("keeps native delivery working when chafa is absent", async () => {
+		const { tool, ctx } = makeTool({
+			capsImages: "kitty",
+			probeChafa: async () => {
+				throw new Error("chafa was not found on PATH (looked for chafa).");
+			},
+		});
+		const result = await tool.execute("v6", { path: "pic.png" }, neverAbort(), noop as never, ctx);
+		expect(result.content.some((c) => c.type === "image")).toBe(true);
+		expect((result.details as ShowImageDetails).files[0]?.mode).toBe("native");
+	});
+	it("keeps the unrecognized-mime refusal on the native path", async () => {
+		const { tool, ctx } = makeTool({
+			capsImages: "kitty",
+			sniffMime: () => "application/octet-stream",
+		});
+		await expect(
+			tool.execute("v7", { path: "pic.png" }, neverAbort(), noop as never, ctx),
+		).rejects.toThrow(/not a recognized image format/);
+	});
+	it("EXHAUSTIVE: no image block is ever emitted for a non-safe mime across the matrix", async () => {
+		const cases: Array<{ capsImages: AgentCapsImages; mime: string; loaders: string[] | null }> = [];
+		for (const capsImages of ["kitty", "iterm2", null] as const) {
+			for (const mime of ["image/svg+xml", "image/avif", "image/bmp", "image/x-icon"]) {
+				for (const loaders of [null, ALL_LOADERS]) {
+					cases.push({ capsImages, mime, loaders });
+				}
+			}
+		}
+		for (const [index, entry] of cases.entries()) {
+			for (const format of ["auto", "symbols"] as const) {
+				const { tool, ctx } = makeTool({
+					capsImages: entry.capsImages,
+					sniffMime: () => entry.mime,
+					probeChafa: async () => ({ ...CHAFA, loaders: entry.loaders }),
+				});
+				const result = await tool.execute(
+					`x${index}-${format}`,
+					{ path: "pic.png", format },
+					neverAbort(),
+					noop as never,
+					ctx,
+				);
+				for (const block of result.content) {
+					if (block.type === "image") {
+						expect(NATIVE_SAFE_MIMES).toContain(
+							(block as { mimeType: string }).mimeType,
+						);
+					}
+				}
+			}
+		}
 	});
 });

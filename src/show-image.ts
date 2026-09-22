@@ -12,7 +12,12 @@ import {
 	runChafa,
 } from "./chafa.js";
 import { readHostImageSettings, resolveConfig } from "./config.js";
-import { decideDelivery, resolveCapsImages } from "./detect.js";
+import {
+	decideDelivery,
+	decideFileDelivery,
+	NATIVE_SAFE_MIMES,
+	resolveCapsImages,
+} from "./detect.js";
 import { expandTargets, readBytes, sniffMime } from "./images.js";
 import type {
 	AgentCapsImages,
@@ -388,16 +393,24 @@ export function buildShowImageTool(
 			const nativeDegraded =
 				(overrides.format ?? "auto") === "native" && mode === "symbols";
 
-			// Symbols delivery needs a working chafa up front (spec §8); the
-			// probe result is the single source of truth for the binary path.
+			// Symbols delivery needs a working chafa; native delivery needs one only
+			// when a file's mime cannot be emitted natively (#014/#015). The probe is
+			// therefore taken lazily, on first need, so a native session without
+			// chafa still renders PNG/JPEG/GIF/WebP (spec §7.1 step 4a, §8).
 			let chafaBinary = "chafa";
-			if (mode === "symbols") {
+			let chafaLoaders: string[] | null = null;
+			let chafaProbed = false;
+			const ensureChafa = async (): Promise<void> => {
+				if (chafaProbed) return;
 				const probe = await d.probeChafa(resolved.symbols.binaryPath, signal);
 				chafaBinary = probe.binary;
-			}
+				chafaLoaders = probe.loaders;
+				chafaProbed = true;
+			};
 
-			// Steps 4–5 — per-file delivery: native reads once per file, symbols
-			// runs chafa once per file. Failures are per-file, never batch-fatal.
+			// Steps 4–5 — per-file delivery: read + sniff once, decide the route
+			// (native block vs chafa symbols vs per-file error), then deliver.
+			// Failures are per-file, never batch-fatal.
 			const files: ShowImageFile[] = [];
 			const imageBlocks: Array<{ data: string; mimeType: string }> = [];
 			// Per-file payloads are collected as { path, payload } pairs so a label can
@@ -424,21 +437,34 @@ export function buildShowImageTool(
 					});
 				}
 				try {
-					if (mode === "native") {
-						const bytes = await d.readBytes(filePath);
-						const mimeType = d.sniffMime(bytes);
-						// Native delivery must never emit a block for a non-image
-						// mime: pi persists the block in session history and every
-						// later provider request fails with 400 (spec §7.4, §8).
-						if (!mimeType.startsWith("image/")) {
-							throw new Error(
-								`not a recognized image format (${mimeType}); use format="symbols" to try rendering it with Chafa`,
-							);
-						}
+					// Read + sniff up front for both paths: the delivery decision needs the
+					// mime before it can choose native vs symbols (#014/#015).
+					const bytes = await d.readBytes(filePath);
+					const mimeType = d.sniffMime(bytes);
+					const format = overrides.format ?? "auto";
+					// Probe only when chafa is actually needed: a symbols session always
+					// needs it, a native session needs it only for a mime that cannot go
+					// native in auto mode (a forced format=native refuses instead).
+					if (
+						mode === "symbols" ||
+						(format !== "native" && !NATIVE_SAFE_MIMES.includes(mimeType))
+					) {
+						await ensureChafa();
+					}
+					const plan = decideFileDelivery({
+						mime: mimeType,
+						mode,
+						format,
+						chafaLoaders,
+					});
+					if (plan.delivery === "error") {
+						throw new Error(plan.error ?? "this file cannot be delivered");
+					}
+					if (plan.delivery === "native") {
 						files.push({
 							path: filePath,
 							ok: true,
-							mode,
+							mode: "native",
 							mimeType,
 							byteSize: bytes.byteLength,
 						});
@@ -454,23 +480,24 @@ export function buildShowImageTool(
 						const payload = d.cleanPayload(stdout);
 						const rows = payload === "" ? 0 : payload.split("\n").length;
 						const maxRows = resolved.symbols.maxRows;
-						let note: string | undefined;
+						let note: string | undefined = plan.note;
 						if (payload === "") {
 							note = "chafa produced no output";
 						} else if (rows >= maxRows) {
 							note = `output capped at maxRows=${maxRows} rows; the image was scaled down to fit`;
-						} else if (widthClampNote) {
-							// Less specific than an output/limitation note above; more
-							// specific than the forced-native degrade below.
-							note = widthClampNote;
-						} else if (nativeDegraded) {
-							// More specific per-file notes above take precedence.
-							note = NATIVE_OFF_NOTE;
+						} else if (!note) {
+							// A format-degrade note (plan.note) outranks the width clamp,
+							// which outranks the forced-native-off degrade.
+							note =
+								widthClampNote ??
+								(nativeDegraded ? NATIVE_OFF_NOTE : undefined);
 						}
 						files.push({
 							path: filePath,
 							ok: true,
-							mode,
+							mode: "symbols",
+							mimeType,
+							byteSize: bytes.byteLength,
 							note,
 						});
 						payloads.push({ path: filePath, payload });
@@ -515,19 +542,21 @@ export function buildShowImageTool(
 				{ type: "text", text: summaryText(files, mode) },
 			];
 
-			if (mode === "native") {
-				// Native delivery: image content blocks for the host Image
-				// component (spec §7.1 step 4a). The host converts non-PNG for
-				// kitty and suppresses blocks when caps/showImages are off.
+			if (imageBlocks.length > 0) {
+				// Native delivery: image content blocks for the host Image component
+				// (spec §7.1 step 4a). The host converts non-PNG for kitty and
+				// suppresses blocks when caps/showImages are off.
 				for (const block of imageBlocks) {
 					content.push({ type: "image", ...block });
 				}
-			} else {
-				// Symbols delivery: the ANSI payload rides in details only —
-				// never in the model-visible text (spec §4.1.2, §4.1.3, §7.3).
-				// A multi-file run labels each block with a sanitized [basename] and
-				// separates blocks with one blank line so the user can tell them apart
-				// (#005); a single file stays unlabeled.
+			}
+			if (payloads.length > 0) {
+				// Symbols delivery: the ANSI payload rides in details only — never in
+				// the model-visible text (spec §4.1.2, §4.1.3, §7.3). This can coexist
+				// with native blocks when a native session degraded some files
+				// (#014/#015). A multi-file run labels each block with a sanitized
+				// [basename] and separates blocks with one blank line so the user can
+				// tell them apart (#005); a single file stays unlabeled.
 				const blocks = payloads
 					.filter((entry) => entry.payload !== "")
 					.map((entry) =>

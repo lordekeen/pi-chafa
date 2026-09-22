@@ -1,8 +1,14 @@
 import { describe, expect, it } from "vitest";
 import {
 	decideDelivery,
+	decideFileDelivery,
 	type DeliveryInput,
+	missingLoaderMessage,
+	NATIVE_SAFE_MIMES,
+	nativeRefusalMessage,
 	resolveCapsImages,
+	symbolsDegradeNote,
+	unrecognizedMimeMessage,
 } from "../src/detect.js";
 
 function input(partial: Partial<DeliveryInput>): DeliveryInput {
@@ -88,5 +94,148 @@ describe("resolveCapsImages — capability fallback ladder", () => {
 	});
 	it("step 4: all sources empty -> null", () => {
 		expect(resolveCapsImages(null, null, undefined)).toBe(null);
+	});
+});
+
+describe("decideFileDelivery — native-safe mime rule (#014/#015)", () => {
+	const UNSAFE_KNOWN = [
+		{ mime: "image/svg+xml", loader: "SVG", label: "SVG" },
+		{ mime: "image/avif", loader: "AVIF", label: "AVIF" },
+		{ mime: "image/bmp", loader: "BMP", label: "BMP" },
+		{ mime: "image/x-icon", loader: "ICO", label: "ICO" },
+	] as const;
+	const ALL_LOADERS = ["AVIF", "BMP", "GIF", "ICO", "JPEG", "PNG", "SVG", "WEBP"];
+
+	it("returns native for every native-safe mime in a native session", () => {
+		for (const mime of NATIVE_SAFE_MIMES) {
+			expect(
+				decideFileDelivery({ mime, mode: "native", format: "auto", chafaLoaders: null })
+					.delivery,
+			).toBe("native");
+			expect(
+				decideFileDelivery({ mime, mode: "native", format: "native", chafaLoaders: [] })
+					.delivery,
+			).toBe("native");
+		}
+	});
+	it("degrades a native session to symbols for a recognized-but-unsafe mime", () => {
+		for (const { mime, label } of UNSAFE_KNOWN) {
+			const plan = decideFileDelivery({
+				mime,
+				mode: "native",
+				format: "auto",
+				chafaLoaders: ALL_LOADERS,
+			});
+			expect(plan.delivery).toBe("symbols");
+			expect(plan.degraded).toBe(true);
+			expect(plan.note).toContain(label);
+			expect(plan.note).toMatch(/rasterizer/);
+			expect(plan.note).toBe(symbolsDegradeNote(mime));
+		}
+	});
+	it("keeps safe mimes on symbols without marking them degraded", () => {
+		for (const mime of NATIVE_SAFE_MIMES) {
+			const plan = decideFileDelivery({
+				mime,
+				mode: "symbols",
+				format: "auto",
+				chafaLoaders: null,
+			});
+			expect(plan.delivery).toBe("symbols");
+			expect(plan.degraded).toBeUndefined();
+			expect(plan.note).toBeUndefined();
+		}
+	});
+	it("errors rather than degrades when format=native is forced on an unsafe mime", () => {
+		for (const { mime } of UNSAFE_KNOWN) {
+			const plan = decideFileDelivery({
+				mime,
+				mode: "native",
+				format: "native",
+				chafaLoaders: ALL_LOADERS,
+			});
+			expect(plan.delivery).toBe("error");
+			expect(plan.error).toMatch(/cannot be delivered as a native image block/);
+			expect(plan.error).toMatch(/format="symbols"/);
+			expect(plan.error).toBe(nativeRefusalMessage(mime));
+		}
+	});
+	it("errors when the chafa build lacks the loader for a recognized format", () => {
+		const plan = decideFileDelivery({
+			mime: "image/bmp",
+			mode: "symbols",
+			format: "auto",
+			chafaLoaders: ["PNG", "SVG"],
+		});
+		expect(plan.delivery).toBe("error");
+		expect(plan.error).toMatch(/BMP/);
+		expect(plan.error).toMatch(/loader/);
+		expect(plan.error).toBe(missingLoaderMessage("image/bmp", "BMP"));
+	});
+	it("errors on a missing loader in a native session too (no path can render it)", () => {
+		const plan = decideFileDelivery({
+			mime: "image/x-icon",
+			mode: "native",
+			format: "auto",
+			chafaLoaders: ["PNG"],
+		});
+		expect(plan.delivery).toBe("error");
+		expect(plan.error).toMatch(/ICO/);
+	});
+	it("attempts when the loader list is unknown (null), never guessing they are missing", () => {
+		for (const { mime } of UNSAFE_KNOWN) {
+			expect(
+				decideFileDelivery({ mime, mode: "symbols", format: "auto", chafaLoaders: null })
+					.delivery,
+			).toBe("symbols");
+		}
+	});
+	it("errors for an unrecognized mime in a native session, keeping the actionable wording", () => {
+		const plan = decideFileDelivery({
+			mime: "application/octet-stream",
+			mode: "native",
+			format: "auto",
+			chafaLoaders: null,
+		});
+		expect(plan.delivery).toBe("error");
+		expect(plan.error).toMatch(/not a recognized image format/);
+		expect(plan.error).toBe(unrecognizedMimeMessage("application/octet-stream"));
+	});
+	it("still attempts an unrecognized mime on the symbols path (chafa is format-flexible)", () => {
+		expect(
+			decideFileDelivery({
+				mime: "application/octet-stream",
+				mode: "symbols",
+				format: "auto",
+				chafaLoaders: null,
+			}).delivery,
+		).toBe("symbols");
+	});
+	it("EXHAUSTIVE: native is only ever chosen for a native-safe mime", () => {
+		const mimes = [
+			...NATIVE_SAFE_MIMES,
+			...UNSAFE_KNOWN.map((entry) => entry.mime),
+			"application/octet-stream",
+			"image/tiff",
+		];
+		for (const mime of mimes) {
+			for (const mode of ["native", "symbols"] as const) {
+				for (const format of ["auto", "native", "symbols"] as const) {
+					for (const chafaLoaders of [null, ALL_LOADERS, ["PNG"]]) {
+						const plan = decideFileDelivery({ mime, mode, format, chafaLoaders });
+						if (plan.delivery === "native") {
+							expect(NATIVE_SAFE_MIMES).toContain(mime);
+						}
+						if (plan.delivery === "error") {
+							expect(plan.error).toBeTruthy();
+							expect(plan.degraded).toBeUndefined();
+						}
+						if (plan.delivery === "symbols" && plan.degraded) {
+							expect(NATIVE_SAFE_MIMES).not.toContain(mime);
+						}
+					}
+				}
+			}
+		}
 	});
 });
