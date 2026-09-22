@@ -358,6 +358,8 @@ describe("show_image execute — live width clamp (#011)", () => {
 		);
 		expect(sizeOf(args())).toBe("48x50");
 		const details = result.details as ShowImageDetails;
+		// #021: the snapshot records what was rendered, not what was requested.
+		expect(details.settings.cellWidth).toBe(48);
 		expect(details.files[0]?.note).toBe(
 			"width clamped from 120 to 48 columns to fit the terminal",
 		);
@@ -379,6 +381,7 @@ describe("show_image execute — live width clamp (#011)", () => {
 			ctx,
 		);
 		expect(sizeOf(args())).toBe("120x50");
+		expect((result.details as ShowImageDetails).settings.cellWidth).toBe(120);
 		expect((result.details as ShowImageDetails).files[0]?.note).toBeUndefined();
 	});
 	it("does not clamp for a terminal below the 8-column guard", async () => {
@@ -403,6 +406,7 @@ describe("show_image execute — live width clamp (#011)", () => {
 			ctx,
 		);
 		expect(sizeOf(args())).toBe("120x50");
+		expect((result.details as ShowImageDetails).settings.cellWidth).toBe(120);
 		expect((result.details as ShowImageDetails).files[0]?.note).toBeUndefined();
 	});
 	it("leaves colors and symbolsSet untouched by the clamp", async () => {

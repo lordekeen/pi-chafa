@@ -176,10 +176,14 @@ function abortError(signal: AbortSignal | undefined): Error {
 function settingsRecord(
 	resolved: ResolvedConfig,
 	overrides: ChafaOverrides,
+	// #021: the live width clamp means the width that was rendered can differ
+	// from the configured one; callers on the symbols path pass the effective
+	// value so the snapshot never overstates what chafa was asked for.
+	cellWidth: number = resolved.symbols.cellWidth,
 ): ShowImageSettings {
 	return {
 		format: overrides.format ?? "auto",
-		cellWidth: resolved.symbols.cellWidth,
+		cellWidth,
 		maxRows: resolved.symbols.maxRows,
 		colors: resolved.symbols.colors,
 		symbolsSet: resolved.symbols.symbolsSet,
@@ -433,7 +437,7 @@ export function buildShowImageTool(
 						details: {
 							mode,
 							files: [],
-							settings: settingsRecord(resolved, overrides),
+							settings: settingsRecord(resolved, overrides, effectiveWidth),
 						},
 					});
 				}
@@ -537,7 +541,7 @@ export function buildShowImageTool(
 			const details: ShowImageDetails = {
 				mode,
 				files,
-				settings: settingsRecord(resolved, overrides),
+				settings: settingsRecord(resolved, overrides, effectiveWidth),
 			};
 			const content: AgentToolResult<ShowImageDetails>["content"] = [
 				{ type: "text", text: summaryText(files, mode) },
