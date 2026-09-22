@@ -17,7 +17,31 @@ description: Show image files to the user in the terminal with the show_image to
 
 - Textual inspection of a file → use `read`, not `show_image`.
 - You need file metadata (size, dates) → use `ls` or `read`.
-- You must interpret the image's contents → impossible for you; say so plainly and offer to show it to the user instead.
+- You must interpret the image's contents → **you cannot read pixels**: `show_image` never returns image content to you. If a vision-capable path exists (see below), use it; otherwise say plainly that you cannot inspect the contents and offer to display the file for the user.
+
+## Interpreting image contents (vision)
+
+`show_image` is strictly for presenting an image to the **human user**. The bytes never enter your context — no base64, no description, no ANSI art. So when a request needs *interpretation* (describe, audit, OCR, "what's wrong in this screenshot"):
+
+- **Dispatch the work to a vision-capable subagent** when one is listed (e.g. `designer`, which runs a vision model). That child reads the file itself; it does not gain vision by calling `show_image` either.
+- **`pi-vision-handoff` is user-initiated.** It registers a `/vision-handoff` slash command for the *user* to attach an image and hand it to the configured vision model. It exposes no model-callable "describe this path" tool, so do not claim you will use it — ask the user to run it instead.
+- You may show the image to the user with `show_image` alongside either route, so they can follow the analysis visually.
+- **Never fabricate image contents.** If no vision path was used, say you did not see the image.
+
+## Subagents
+
+Subagents declare a strict tool allowlist in their frontmatter, so `show_image` is **not** available to them by default. Extension tools need the `ext:` selector — a bare `show_image` entry is parsed as a built-in name and fails loudly:
+
+```yaml
+# ~/.pi/agent/agents/designer.md
+tools: read, grep, find, ls, write, ext:pi-chafa/show_image, ext:pi-codegraph
+```
+
+- `ext:pi-chafa/show_image` exposes exactly this tool; `ext:pi-chafa` exposes all of the extension's tools.
+- Any `ext:` entry flips extension tools to an explicit allowlist for that agent — list every extension tool it should keep, or the others disappear.
+- Extension names match case-insensitively; tool names stay case-sensitive.
+
+**Headless reality:** a subagent session runs without a UI (`ctx.hasUI === false`), so `show_image` returns only the plain-text summary — nothing is rendered in the terminal and no ANSI or image block is produced. To actually show the user an image a subagent used, the orchestrator re-invokes `show_image` at top level after the child reports the file path.
 
 ## Coordination with pi-pretty (important)
 

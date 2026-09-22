@@ -29,6 +29,23 @@ Run `/images` to tune defaults (including `timeoutMs`) and inspect the runtime e
 - <kbd>e</kbd> — Open modal to type a custom value
 - <kbd>Esc</kbd> / <kbd>q</kbd> — Save changes and close
 
+## Subagents and vision
+
+Subagents declare a strict tool allowlist, so they need an explicit extension-tool selector for `show_image` — a bare `show_image` entry is parsed as a built-in name and rejected:
+
+```yaml
+# ~/.pi/agent/agents/designer.md
+tools: read, grep, find, ls, write, ext:pi-chafa/show_image, ext:pi-codegraph
+```
+
+- `ext:pi-chafa/show_image` exposes just this tool; `ext:pi-chafa` exposes all of the extension's tools.
+- Any `ext:` entry flips extension tools to an explicit allowlist for that agent — list every extension tool it should keep.
+- Extension names are case-insensitive; tool names are case-sensitive.
+
+Subagent sessions are headless (`ctx.hasUI === false`): `show_image` returns the plain-text summary only and nothing is rendered. The orchestrator re-invokes `show_image` at top level to actually show the user the image.
+
+`show_image` never returns image content to the model, so **interpreting** an image requires a vision model: dispatch a vision-capable subagent (e.g. `designer`), or ask the user to run `/vision-handoff` — that extension is user-initiated and exposes no model-callable describe tool.
+
 ## Terminal matrix
 
 | Terminal | Delivery |
