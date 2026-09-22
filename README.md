@@ -29,6 +29,8 @@ Run `/images` to tune defaults (including `timeoutMs`) and inspect the runtime e
 - <kbd>e</kbd> — Open modal to type a custom value
 - <kbd>Esc</kbd> / <kbd>q</kbd> — Save changes and close
 
+`/images status` prints those runtime facts as a notification and returns without opening the panel. Any other argument warns and opens the panel (`show` / `reset` are **not** implemented yet).
+
 ## Subagents and vision
 
 Subagents declare a strict tool allowlist, so they need an explicit extension-tool selector for `show_image` — a bare `show_image` entry is parsed as a built-in name and rejected:

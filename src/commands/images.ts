@@ -24,6 +24,7 @@ import {
 	writeConfigFile,
 } from "../config.js";
 import { resolveCapsImages } from "../detect.js";
+import { stripControls } from "../show-image.js";
 import {
 	type AgentCapsImages,
 	type ChafaConfig,
@@ -425,12 +426,33 @@ type WizardAction =
  */
 export async function runImagesCommand(
 	pi: Pick<ExtensionAPI, "getAllTools">,
-	_args: string,
+	args: string,
 	ctx: ExtensionCommandContext,
 ): Promise<void> {
 	const ui = ctx.ui;
 	const agentDir = getConfigDir();
 	let config = loadConfig(agentDir);
+
+	// Argument surface (#016 partial, decision D5): `status` prints the runtime
+	// facts and returns without opening the panel; an unknown argument warns and
+	// then opens the panel, which keeps this forward-compatible with the deferred
+	// show/open/reset subcommands. No argument = the interactive panel.
+	const rawArg = typeof args === "string" ? args.trim() : "";
+	const arg = rawArg.toLowerCase();
+	if (arg === "status") {
+		const facts = await buildRuntimeFacts(pi, config, agentDir);
+		ui.notify(describeRuntime(facts).join("\n"), "info");
+		return;
+	}
+	if (arg !== "") {
+		// Sanitize before it reaches the TUI: the argument is user input and must
+		// never carry ANSI/control bytes into a notification (AGENTS.md invariant 3).
+		ui.notify(
+			`pi-chafa: unknown /images argument '${stripControls(rawArg)}' — opening settings`,
+			"warning",
+		);
+	}
+
 	const systemChafa = await probeToFact(null);
 	const detectedBinary = systemChafa.present ? systemChafa.binary : undefined;
 

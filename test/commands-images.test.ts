@@ -402,6 +402,90 @@ describe("runImagesCommand", () => {
 		expect(rendered?.join("\n")).toContain("pi-chafa Settings");
 	});
 
+	it("prints runtime status for an explicit 'status' argument without opening the panel (#016)", async () => {
+		const pi = { getAllTools: () => [] };
+		const notifyMock = vi.fn();
+		const customMock = vi.fn();
+		const selectMock = vi.fn();
+		const ctx = {
+			ui: { custom: customMock, select: selectMock, notify: notifyMock, input: vi.fn() },
+		};
+
+		await runImagesCommand(pi as never, "status", ctx as never);
+
+		expect(customMock).not.toHaveBeenCalled();
+		expect(selectMock).not.toHaveBeenCalled();
+		expect(notifyMock).toHaveBeenCalledTimes(1);
+		const [message, level] = notifyMock.mock.calls[0] as [string, string];
+		expect(level).toBe("info");
+		expect(message).toContain("Detected image protocol:");
+		expect(message).toContain("Host showImages:");
+		expect(message).toContain("pi-pretty-style read override:");
+		expect(message).toContain("chafa:");
+		expect(message.split("\n")).toHaveLength(4);
+	});
+
+	it("accepts the status argument case-insensitively and trimmed (#016)", async () => {
+		const pi = { getAllTools: () => [] };
+		for (const arg of ["STATUS", "  Status  ", "status"]) {
+			const notifyMock = vi.fn();
+			const customMock = vi.fn();
+			await runImagesCommand(pi as never, arg, {
+				ui: { custom: customMock, select: vi.fn(), notify: notifyMock, input: vi.fn() },
+			} as never);
+			expect(customMock).not.toHaveBeenCalled();
+			expect(notifyMock).toHaveBeenCalledTimes(1);
+		}
+	});
+
+	it("warns and still opens the settings panel for an unknown argument (#016)", async () => {
+		const pi = { getAllTools: () => [] };
+		const notifyMock = vi.fn();
+		const customMock = vi.fn().mockImplementation(async (cb) => {
+			const tui = { requestRender: vi.fn() };
+			const theme = {
+				fg: (_c: string, text: string) => text,
+				bold: (text: string) => text,
+			};
+			cb(tui, theme, {}, () => {});
+			return { action: "done" };
+		});
+		const ctx = {
+			ui: { custom: customMock, select: vi.fn(), notify: notifyMock, input: vi.fn() },
+		};
+
+		await runImagesCommand(pi as never, "bogus", ctx as never);
+
+		expect(notifyMock).toHaveBeenCalledWith(
+			expect.stringContaining("unknown /images argument 'bogus'"),
+			"warning",
+		);
+		expect(customMock).toHaveBeenCalledTimes(1);
+	});
+
+	it("sanitizes control characters in an unknown argument before notifying (#016)", async () => {
+		const pi = { getAllTools: () => [] };
+		const notifyMock = vi.fn();
+		const customMock = vi.fn().mockImplementation(async (cb) => {
+			const tui = { requestRender: vi.fn() };
+			const theme = {
+				fg: (_c: string, text: string) => text,
+				bold: (text: string) => text,
+			};
+			cb(tui, theme, {}, () => {});
+			return { action: "done" };
+		});
+		const ctx = {
+			ui: { custom: customMock, select: vi.fn(), notify: notifyMock, input: vi.fn() },
+		};
+
+		await runImagesCommand(pi as never, "bo\u001b[31mgus", ctx as never);
+
+		const [message] = notifyMock.mock.calls[0] as [string, string];
+		expect(message).not.toContain("\u001b");
+		expect(message).toContain("bogus");
+	});
+
 	it("closes the panel on lowercase q and documents it in the hint (#003)", async () => {
 		const pi = { getAllTools: () => [] };
 		const doneMock = vi.fn();
