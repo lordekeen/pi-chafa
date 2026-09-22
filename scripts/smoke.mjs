@@ -6,7 +6,7 @@
 //   node <repo>/scripts/smoke.mjs
 // The repo path is derived from this file's own location, so any cwd works.
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { platform, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -72,11 +72,29 @@ async function main(work) {
 	mkdirSync(cfgDir, { recursive: true });
 
 	// ------------------------------------------------------------------ fixtures
+	// Optional fixtures are best-effort: a magick build without an AVIF/ICO
+	// delegate must skip those checks, not fail the whole run.
+	const fixtures = { png: true, jpg: true, gif: true, webp: true, svg: true, bmp: true, ico: true, avif: true };
+	const magickFixture = (label, args) => {
+		try {
+			execFileSync("magick", args);
+		} catch {
+			fixtures[label] = false;
+			console.log(`  (fixture skipped: magick could not write ${label})`);
+		}
+	};
 	execFileSync("magick", ["-size", "120x80", "gradient:red-blue", join(work, "img.png")]);
 	execFileSync("magick", [join(work, "img.png"), join(work, "img.jpg")]);
 	execFileSync("magick", [join(work, "img.png"), join(work, "img.gif")]);
 	execFileSync("magick", [join(work, "img.png"), join(work, "img.webp")]);
 	execFileSync("magick", ["-size", "200x1200", "gradient:blue-red", join(work, "tall.png")]);
+	writeFileSync(
+		join(work, "img.svg"),
+		'<svg xmlns="http://www.w3.org/2000/svg" width="120" height="80"><rect width="120" height="80" fill="#3366cc"/><circle cx="60" cy="40" r="24" fill="#ffcc00"/></svg>',
+	);
+	magickFixture("bmp", [join(work, "img.png"), join(work, "img.bmp")]);
+	magickFixture("ico", [join(work, "img.png"), "-resize", "32x32", join(work, "img.ico")]);
+	magickFixture("avif", [join(work, "img.png"), join(work, "img.avif")]);
 	writeFileSync(join(work, "unknown.bin"), Buffer.from([0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07]));
 	console.log(`fixtures in ${work}`);
 
@@ -105,10 +123,22 @@ async function main(work) {
 
 	// ----------------------------------------------------------- 2. mime sniff
 	section("2. real files: mime sniffing");
-	for (const [file, want] of [["img.png", "image/png"], ["img.jpg", "image/jpeg"], ["img.gif", "image/gif"], ["img.webp", "image/webp"], ["unknown.bin", "application/octet-stream"]]) {
+	const mimeCases = [
+		["png", "img.png", "image/png"],
+		["jpg", "img.jpg", "image/jpeg"],
+		["gif", "img.gif", "image/gif"],
+		["webp", "img.webp", "image/webp"],
+		["svg", "img.svg", "image/svg+xml"],
+		["bmp", "img.bmp", "image/bmp"],
+		["ico", "img.ico", "image/x-icon"],
+		["avif", "img.avif", "image/avif"],
+	];
+	for (const [label, file, want] of mimeCases) {
+		if (!fixtures[label]) continue;
 		const got = sniffMime(await readBytes(join(work, file)));
 		check(`${file} -> ${want}`, got === want, `got ${got}`);
 	}
+	check("unknown.bin -> application/octet-stream", sniffMime(await readBytes(join(work, "unknown.bin"))) === "application/octet-stream");
 
 	// --------------------------------------------------------- 3. path/glob fs
 	section("3. real filesystem: expansion");
@@ -237,6 +267,58 @@ async function main(work) {
 	check("5i error names the sniffed mime", /application\/octet-stream/.test(unknownMsg ?? ""), String(unknownMsg).slice(0, 200));
 	check("5i error suggests format=symbols", /format="symbols"/.test(unknownMsg ?? ""), String(unknownMsg).slice(0, 200));
 
+	// 5j. Mime-aware delivery (#014/#015): the native-safe mime rule. Only
+	// png/jpeg/gif/webp may travel as image blocks; everything else degrades to
+	// Chafa symbols (auto) or is refused per-file (forced native, missing loader).
+	section("5j. mime-aware delivery (#014/#015)");
+	const SAFE_MIMES = new Set(["image/png", "image/jpeg", "image/gif", "image/webp"]);
+	const nativeTool = buildShowImageTool({ capsImages: () => "kitty" });
+	check("5j real loaders parsed", probe.loaders === null || Array.isArray(probe.loaders), JSON.stringify(probe.loaders));
+	check("5j loaders normalized upper-case", probe.loaders === null || probe.loaders.every((l) => l === l.toUpperCase()), JSON.stringify(probe.loaders));
+	for (const [label, file] of [["png", "img.png"], ["jpg", "img.jpg"], ["gif", "img.gif"], ["webp", "img.webp"]]) {
+		if (!fixtures[label]) continue;
+		const r = await nativeTool.execute(`j-${label}`, { path: join(work, file) }, undefined, undefined, ctx);
+		const block = r.content.find((c) => c.type === "image");
+		check(`5j native block for ${file}`, Boolean(block) && SAFE_MIMES.has(block.mimeType), `mime=${block?.mimeType}`);
+	}
+	for (const [label, file, loader] of [["svg", "img.svg", "SVG"], ["bmp", "img.bmp", "BMP"], ["ico", "img.ico", "ICO"], ["avif", "img.avif", "AVIF"]]) {
+		if (!fixtures[label]) continue;
+		const loaderMissing = probe.loaders !== null && !probe.loaders.includes(loader);
+		let autoRes = null;
+		let autoErr = null;
+		try {
+			autoRes = await nativeTool.execute(`j-${label}-auto`, { path: join(work, file) }, undefined, undefined, ctx);
+		} catch (e) {
+			autoErr = e.message;
+		}
+		const nonSafeBlock = autoRes?.content.find((c) => c.type === "image" && !SAFE_MIMES.has(c.mimeType));
+		check(`5j INVARIANT: no non-safe native block for ${file}`, !nonSafeBlock, JSON.stringify(nonSafeBlock?.mimeType));
+		if (loaderMissing) {
+			check(
+				`5j ${file} auto: per-file error naming the missing ${loader} loader`,
+				new RegExp(loader).test(autoErr ?? "") && /loader/.test(autoErr ?? ""),
+				String(autoErr).slice(0, 200),
+			);
+		} else {
+			const shown = autoRes?.details.files?.[0];
+			check(
+				`5j ${file} auto: symbols art with a degrade note`,
+				shown?.ok === true &&
+					shown.mode === "symbols" &&
+					/shows?ing .* as ANSI art/.test(shown.note ?? "") &&
+					(autoRes?.details.payload ?? "").includes(ESC),
+				`${JSON.stringify(shown ?? autoErr)}`,
+			);
+		}
+		let refuseMsg = null;
+		try {
+			await nativeTool.execute(`j-${label}-forced`, { path: join(work, file), format: "native" }, undefined, undefined, ctx);
+		} catch (e) {
+			refuseMsg = e.message;
+		}
+		check(`5j ${file} format=native refuses rather than degrades`, /cannot be delivered as a native image block/.test(refuseMsg ?? ""), String(refuseMsg).slice(0, 200));
+	}
+
 	// 6. round-trip: writeConfigFile -> loadConfig (atomic write path, real disk)
 	section("6. config persistence round-trip (real disk)");
 	writeConfigFile(cfgDir, { ...resolveConfig({}, cfgDir).symbols, preferNative: false, formatOrder: ["symbols"], version: 1, colors: "16", symbolsSet: "block", dither: "none", cellWidth: 42, maxRows: 7, binaryPath: null, timeoutMs: 1234 });
@@ -244,7 +326,7 @@ async function main(work) {
 	check("persisted cellWidth survives reload", reloaded.symbols.cellWidth === 42, String(reloaded.symbols.cellWidth));
 	check("persisted timeoutMs survives reload", reloaded.symbols.timeoutMs === 1234, String(reloaded.symbols.timeoutMs));
 	check("persisted preferNative survives reload", reloaded.preferNative === false);
-	check("atomic write left no .tmp behind", !existsSync(join(cfgDir, "pi-chafa.json.tmp")));
+	check("atomic write left no .tmp behind", !readdirSync(cfgDir).some((name) => name.endsWith(".tmp")));
 	check("per-call override beats config", resolveConfig({ cellWidth: 7 }, cfgDir).symbols.cellWidth === 7);
 	check("blank symbolsSet falls back to config", resolveConfig({ symbolsSet: "  " }, cfgDir).symbols.symbolsSet === "block");
 
