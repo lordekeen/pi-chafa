@@ -1,4 +1,4 @@
-import { type Dirent, readdirSync, statSync } from "node:fs";
+import { type Dirent, readdirSync, realpathSync, statSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { isAbsolute, join, resolve, sep } from "node:path";
 
@@ -70,6 +70,7 @@ function searchRoot(absPattern: string): string {
 
 function walkFiles(root: string): string[] {
 	const out: string[] = [];
+	let sawSymlink = false;
 	const stack = [root];
 	while (stack.length > 0) {
 		const current = stack.pop() as string;
@@ -86,7 +87,10 @@ function walkFiles(root: string): string[] {
 				// match; a link to a directory is never descended (symlink cycles), and
 				// a broken link or unreadable target is skipped silently.
 				try {
-					if (statSync(entryPath).isFile()) out.push(entryPath);
+					if (statSync(entryPath).isFile()) {
+						sawSymlink = true;
+						out.push(entryPath);
+					}
 				} catch {
 					// broken link or unreadable target: skip
 				}
@@ -100,7 +104,28 @@ function walkFiles(root: string): string[] {
 			}
 		}
 	}
-	return out.sort(compareCodeUnits);
+	const sorted = out.sort(compareCodeUnits);
+	// A glob can match both a symlink and its target, which would render the same
+	// image twice (#022). De-duplicate by resolved real path, keeping the first
+	// path in code-unit order so the result stays deterministic. Gated on having
+	// seen a symlink, so an ordinary walk pays no realpath cost.
+	if (!sawSymlink) return sorted;
+	const seen = new Set<string>();
+	const deduped: string[] = [];
+	for (const file of sorted) {
+		let real: string;
+		try {
+			real = realpathSync(file);
+		} catch {
+			// Vanished mid-walk: keep it, so the reader reports the per-file failure.
+			deduped.push(file);
+			continue;
+		}
+		if (seen.has(real)) continue;
+		seen.add(real);
+		deduped.push(file);
+	}
+	return deduped;
 }
 
 function compareCodeUnits(a: string, b: string): number {

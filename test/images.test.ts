@@ -117,15 +117,42 @@ describe("expandTargets — symlinks (#001)", () => {
 		}
 		expect(expandTargets("broken.png", dir)).toEqual([]);
 	});
-	it("includes a symlinked image in a glob walk", (context) => {
+	it("includes a symlinked image in a glob walk (#001)", (context) => {
+		// The pattern matches only the link, and its target does not match it, so
+		// the link is the only path representing the file: #001 requires it.
 		const link = join(dir, "screenshots", "link.png");
+		if (!trySymlink(join(dir, "sub", "c.gif"), link)) {
+			context.skip();
+			return;
+		}
+		expect(expandTargets("screenshots/link*.png", dir)).toEqual([link]);
+	});
+	it("de-duplicates a symlink whose target also matches the glob (#022)", (context) => {
+		const link = join(dir, "screenshots", "z-link.png");
 		if (!trySymlink(join(dir, "screenshots", "a.png"), link)) {
 			context.skip();
 			return;
 		}
+		// Both paths match `*.png` but resolve to the same file: one entry, and the
+		// first path in code-unit order wins.
 		expect(expandTargets("screenshots/*.png", dir)).toEqual([
 			join(dir, "screenshots", "a.png"),
-			link,
+		]);
+	});
+	it("de-duplicates two symlinks pointing at the same target (#022)", (context) => {
+		const first = join(dir, "screenshots", "m-one.png");
+		const second = join(dir, "screenshots", "n-two.png");
+		if (
+			!trySymlink(join(dir, "sub", "c.gif"), first) ||
+			!trySymlink(join(dir, "sub", "c.gif"), second)
+		) {
+			context.skip();
+			return;
+		}
+		// a.png is a real file and must survive the de-duplication untouched.
+		expect(expandTargets("screenshots/*.png", dir)).toEqual([
+			join(dir, "screenshots", "a.png"),
+			first,
 		]);
 	});
 	it("does not descend a symlinked directory during a glob walk", (context) => {
