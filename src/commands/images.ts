@@ -28,10 +28,12 @@ import { stripControls } from "../show-image.js";
 import {
 	type AgentCapsImages,
 	type ChafaConfig,
+	type ChafaProbe,
 	COLOR_MODES,
 	type ColorsMode,
 	DITHER_MODES,
 	type DitherMode,
+	type HostImageSettings,
 } from "../types.js";
 
 /** Preset ladders shared by the SettingsList item builder and the fallback flow. */
@@ -353,11 +355,35 @@ export function applyMenuChange(
 // be poisoned by a transient tool-side failure path (rejections are not cached).
 const cachedProbe = createCachedProbe();
 
+/**
+ * Injected side effects for `/images` (AGENTS.md "TDD & Injected Dependencies").
+ * Production wires the real probe cache, the real host settings read, and the
+ * real terminal capability singleton; tests inject fakes so the hermetic unit
+ * suite never spawns chafa or reads the developer's real `settings.json` (#019).
+ */
+export interface ImagesCommandDeps {
+	/** Success-only chafa probe cache, shared with the panel's status output. */
+	probeChafa: (binaryPath: string | null) => Promise<ChafaProbe>;
+	/** Host `settings.json` read (spec §6.4). */
+	readHostImageSettings: (agentDir: string) => HostImageSettings;
+	/** Terminal image capability singleton (`getCapabilities().images`). */
+	capsImages: () => AgentCapsImages;
+}
+
+function defaultImagesDeps(): ImagesCommandDeps {
+	return {
+		probeChafa: cachedProbe,
+		readHostImageSettings,
+		capsImages: () => getCapabilities().images,
+	};
+}
+
 async function probeToFact(
 	binaryPath: string | null,
+	probeChafa: ImagesCommandDeps["probeChafa"],
 ): Promise<RuntimeFacts["chafa"]> {
 	try {
-		const probe = await cachedProbe(binaryPath);
+		const probe = await probeChafa(binaryPath);
 		return {
 			present: true,
 			binary: probe.binary,
@@ -404,14 +430,15 @@ async function buildRuntimeFacts(
 	pi: Pick<ExtensionAPI, "getAllTools">,
 	config: ChafaConfig,
 	agentDir: string,
+	deps: ImagesCommandDeps,
 ): Promise<RuntimeFacts> {
-	const hostImages = readHostImageSettings(agentDir);
+	const hostImages = deps.readHostImageSettings(agentDir);
 	const caps = resolveRuntimeCaps(
-		getCapabilities().images,
+		deps.capsImages(),
 		hostImages.images,
 		process.env.PI_IMAGE_PROTOCOL,
 	);
-	const chafa = await probeToFact(config.binaryPath);
+	const chafa = await probeToFact(config.binaryPath, deps.probeChafa);
 	return collectRuntimeFacts(pi, caps, hostImages.showImages, chafa);
 }
 
@@ -428,7 +455,9 @@ export async function runImagesCommand(
 	pi: Pick<ExtensionAPI, "getAllTools">,
 	args: string,
 	ctx: ExtensionCommandContext,
+	deps: Partial<ImagesCommandDeps> = {},
 ): Promise<void> {
+	const d = { ...defaultImagesDeps(), ...deps };
 	const ui = ctx.ui;
 	const agentDir = getConfigDir();
 	let config = loadConfig(agentDir);
@@ -440,7 +469,7 @@ export async function runImagesCommand(
 	const rawArg = typeof args === "string" ? args.trim() : "";
 	const arg = rawArg.toLowerCase();
 	if (arg === "status") {
-		const facts = await buildRuntimeFacts(pi, config, agentDir);
+		const facts = await buildRuntimeFacts(pi, config, agentDir, d);
 		ui.notify(describeRuntime(facts).join("\n"), "info");
 		return;
 	}
@@ -453,7 +482,7 @@ export async function runImagesCommand(
 		);
 	}
 
-	const systemChafa = await probeToFact(null);
+	const systemChafa = await probeToFact(null, d.probeChafa);
 	const detectedBinary = systemChafa.present ? systemChafa.binary : undefined;
 
 	// Primary interactive TUI interface: SettingsList with inline cycling & descriptions
@@ -566,7 +595,7 @@ export async function runImagesCommand(
 			}
 
 			if (result.action === "status") {
-				const facts = await buildRuntimeFacts(pi, config, agentDir);
+				const facts = await buildRuntimeFacts(pi, config, agentDir, d);
 				const options = [...describeRuntime(facts), "Close"];
 				await ui.select("Runtime status (informational)", options);
 				continue;
@@ -693,7 +722,7 @@ export async function runImagesCommand(
 		if (!choice || choice.startsWith("Done")) return;
 
 		if (choice.startsWith("Runtime status")) {
-			const facts = await buildRuntimeFacts(pi, config, agentDir);
+			const facts = await buildRuntimeFacts(pi, config, agentDir, d);
 			const statusOptions = [...describeRuntime(facts), "Close"];
 			await ui.select("Runtime status (informational)", statusOptions);
 			continue;

@@ -10,10 +10,41 @@ import {
 	collectRuntimeFacts,
 	createSettingsTheme,
 	describeRuntime,
+	type ImagesCommandDeps,
 	resolveRuntimeCaps,
-	runImagesCommand,
+	runImagesCommand as runImagesCommandRaw,
 } from "../src/commands/images.js";
 import { COLOR_MODES, DITHER_MODES, type ChafaConfig } from "../src/types.js";
+
+/** A synthetic successful probe — the suite must never spawn the real chafa (#019). */
+const FAKE_PROBE = {
+	binary: "chafa",
+	version: { major: 1, minor: 18 },
+	loaders: ["PNG", "JPEG", "GIF", "WEBP"],
+};
+
+/**
+ * Hermetic `/images` invocation (#019). Production defaults would spawn the real
+ * `chafa --version` and read the developer's real `~/.pi/agent/settings.json`,
+ * so every call in this file injects fakes instead. The seam is asserted by the
+ * "uses the injected deps" test in the `runImagesCommand` suite.
+ */
+const runImagesCommand = (
+	pi: unknown,
+	args: string,
+	ctx: unknown,
+	overrides: Partial<ImagesCommandDeps> = {},
+): Promise<void> =>
+	runImagesCommandRaw(pi as never, args as never, ctx as never, {
+		probeChafa: async () => FAKE_PROBE,
+		readHostImageSettings: () => ({
+			showImages: true,
+			imageWidthCells: 60,
+			images: null,
+		}),
+		capsImages: () => null,
+		...overrides,
+	});
 
 describe("SETTING_DESCRIPTIONS", () => {
 	it("provides non-empty descriptions for all settings and actions", () => {
@@ -436,6 +467,36 @@ describe("runImagesCommand", () => {
 			expect(customMock).not.toHaveBeenCalled();
 			expect(notifyMock).toHaveBeenCalledTimes(1);
 		}
+	});
+
+	it("uses the injected deps instead of spawning chafa or reading real settings (#019)", async () => {
+		const pi = { getAllTools: () => [] };
+		const probe = vi.fn(async () => FAKE_PROBE);
+		const readHost = vi.fn(() => ({
+			showImages: true,
+			imageWidthCells: 60,
+			images: null,
+		}));
+		const notifyMock = vi.fn();
+
+		await runImagesCommand(
+			pi,
+			"status",
+			{
+				ui: {
+					custom: vi.fn(),
+					select: vi.fn(),
+					notify: notifyMock,
+					input: vi.fn(),
+				},
+			},
+			{ probeChafa: probe, readHostImageSettings: readHost },
+		);
+
+		expect(probe).toHaveBeenCalledWith(null);
+		expect(readHost).toHaveBeenCalledTimes(1);
+		const [message] = notifyMock.mock.calls[0] as [string];
+		expect(message).toContain("chafa: 1.18 (chafa)");
 	});
 
 	it("warns and still opens the settings panel for an unknown argument (#016)", async () => {
