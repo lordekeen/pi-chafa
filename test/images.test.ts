@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, sep } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -77,6 +77,64 @@ describe("expandTargets", () => {
 		const re = globToRegExp(`${posixDir}/**/*.gif`);
 		expect(re.test(`${posixDir}/top.gif`)).toBe(true);
 		expect(re.test(`${posixDir}/sub/c.gif`)).toBe(true);
+	});
+});
+
+describe("expandTargets — symlinks (#001)", () => {
+	// Symlink creation can be unavailable (Windows without developer mode,
+	// restricted sandboxes); each case reports a skip instead of failing.
+	function trySymlink(target: string, linkPath: string): boolean {
+		try {
+			symlinkSync(target, linkPath);
+			return true;
+		} catch {
+			return false;
+		}
+	}
+	it("resolves an explicit symlink to a file at the link path, not the target", (context) => {
+		const link = join(dir, "link.png");
+		if (!trySymlink(join(dir, "screenshots", "a.png"), link)) {
+			context.skip();
+			return;
+		}
+		expect(expandTargets("link.png", dir)).toEqual([link]);
+	});
+	it("throws the directory error for an explicit symlink to a directory", (context) => {
+		const link = join(dir, "link-dir");
+		if (!trySymlink(join(dir, "screenshots"), link)) {
+			context.skip();
+			return;
+		}
+		expect(() => expandTargets("link-dir", dir)).toThrow(
+			/is a directory; show_image targets files/,
+		);
+	});
+	it("returns an empty list for a broken symlink", (context) => {
+		const link = join(dir, "broken.png");
+		if (!trySymlink(join(dir, "missing-target.png"), link)) {
+			context.skip();
+			return;
+		}
+		expect(expandTargets("broken.png", dir)).toEqual([]);
+	});
+	it("includes a symlinked image in a glob walk", (context) => {
+		const link = join(dir, "screenshots", "link.png");
+		if (!trySymlink(join(dir, "screenshots", "a.png"), link)) {
+			context.skip();
+			return;
+		}
+		expect(expandTargets("screenshots/*.png", dir)).toEqual([
+			join(dir, "screenshots", "a.png"),
+			link,
+		]);
+	});
+	it("does not descend a symlinked directory during a glob walk", (context) => {
+		const link = join(dir, "link-sub");
+		if (!trySymlink(join(dir, "sub"), link)) {
+			context.skip();
+			return;
+		}
+		expect(expandTargets("**/*.gif", dir)).toEqual([join(dir, "sub", "c.gif")]);
 	});
 });
 

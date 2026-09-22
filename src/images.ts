@@ -1,4 +1,4 @@
-import { type Dirent, lstatSync, readdirSync } from "node:fs";
+import { type Dirent, readdirSync, statSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { isAbsolute, join, resolve, sep } from "node:path";
 
@@ -80,11 +80,23 @@ function walkFiles(root: string): string[] {
 			continue; // unreadable dir during a magic walk: skip, not fatal
 		}
 		for (const entry of entries) {
+			const entryPath = join(current, entry.name);
+			if (entry.isSymbolicLink()) {
+				// Follow the link to decide what it is (#001). A link to a file is a
+				// match; a link to a directory is never descended (symlink cycles), and
+				// a broken link or unreadable target is skipped silently.
+				try {
+					if (statSync(entryPath).isFile()) out.push(entryPath);
+				} catch {
+					// broken link or unreadable target: skip
+				}
+				continue;
+			}
 			if (entry.isDirectory()) {
 				if (PRUNE_DIRS.has(entry.name)) continue;
-				stack.push(join(current, entry.name));
+				stack.push(entryPath);
 			} else if (entry.isFile()) {
-				out.push(join(current, entry.name));
+				out.push(entryPath);
 			}
 		}
 	}
@@ -115,7 +127,10 @@ export function expandTargets(target: string, cwd: string): string[] {
 
 	if (!hasMagic(absPattern)) {
 		try {
-			const stats = lstatSync(absPattern);
+			// statSync (not lstatSync) follows symlinks: a link to a file resolves to
+			// the link path, a link to a directory hits the directory error below, and
+			// a broken link throws ENOENT which the catch maps to [] (#001).
+			const stats = statSync(absPattern);
 			if (stats.isDirectory()) {
 				throw new Error(`${target} is a directory; show_image targets files`);
 			}
