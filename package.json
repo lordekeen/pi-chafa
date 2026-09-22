@@ -1,6 +1,6 @@
 {
   "name": "pi-chafa",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Show image files to the user in the pi terminal — native kitty/iTerm2 where supported, Chafa ANSI symbols everywhere else.",
   "keywords": ["pi", "pi-extension", "pi-package", "chafa", "terminal-image"],
   "license": "MIT",
