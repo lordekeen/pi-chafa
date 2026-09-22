@@ -402,6 +402,112 @@ describe("runImagesCommand", () => {
 		expect(rendered?.join("\n")).toContain("pi-chafa Settings");
 	});
 
+	it("closes the panel on lowercase q and documents it in the hint (#003)", async () => {
+		const pi = { getAllTools: () => [] };
+		const doneMock = vi.fn();
+		let handleInput: ((data: string) => void) | undefined;
+		let rendered: string[] = [];
+
+		const customMock = vi.fn().mockImplementation(async (cb) => {
+			const tui = { requestRender: vi.fn() };
+			const theme = {
+				fg: (_c: string, text: string) => text,
+				bold: (text: string) => text,
+			};
+			const component = cb(tui, theme, {}, doneMock) as {
+				render: (w: number) => string[];
+				handleInput: (data: string) => void;
+			};
+			handleInput = component.handleInput;
+			rendered = component.render(80);
+			return { action: "done" };
+		});
+
+		const ctx = {
+			ui: {
+				custom: customMock,
+				select: vi.fn(),
+				notify: vi.fn(),
+				input: vi.fn(),
+			},
+		};
+
+		await runImagesCommand(pi as never, "", ctx as never);
+
+		expect(handleInput).toBeDefined();
+		expect(rendered.join("\n")).toContain("Esc/q close");
+		handleInput?.("q");
+		expect(doneMock).toHaveBeenCalledWith({ action: "done" });
+	});
+
+	it("closes the panel on uppercase Q (#003)", async () => {
+		const pi = { getAllTools: () => [] };
+		const doneMock = vi.fn();
+		let handleInput: ((data: string) => void) | undefined;
+
+		const customMock = vi.fn().mockImplementation(async (cb) => {
+			const tui = { requestRender: vi.fn() };
+			const theme = {
+				fg: (_c: string, text: string) => text,
+				bold: (text: string) => text,
+			};
+			const component = cb(tui, theme, {}, doneMock) as {
+				handleInput: (data: string) => void;
+			};
+			handleInput = component.handleInput;
+			return { action: "done" };
+		});
+
+		const ctx = {
+			ui: {
+				custom: customMock,
+				select: vi.fn(),
+				notify: vi.fn(),
+				input: vi.fn(),
+			},
+		};
+
+		await runImagesCommand(pi as never, "", ctx as never);
+
+		handleInput?.("Q");
+		expect(doneMock).toHaveBeenCalledWith({ action: "done" });
+	});
+
+	it("keeps the panel open for a non-exit key and still closes on q (#003)", async () => {
+		const pi = { getAllTools: () => [] };
+		const doneMock = vi.fn();
+		let handleInput: ((data: string) => void) | undefined;
+
+		const customMock = vi.fn().mockImplementation(async (cb) => {
+			const tui = { requestRender: vi.fn() };
+			const theme = {
+				fg: (_c: string, text: string) => text,
+				bold: (text: string) => text,
+			};
+			const component = cb(tui, theme, {}, doneMock) as {
+				handleInput: (data: string) => void;
+			};
+			handleInput = component.handleInput;
+			return { action: "done" };
+		});
+
+		const ctx = {
+			ui: {
+				custom: customMock,
+				select: vi.fn(),
+				notify: vi.fn(),
+				input: vi.fn(),
+			},
+		};
+
+		await runImagesCommand(pi as never, "", ctx as never);
+
+		handleInput?.("j");
+		expect(doneMock).not.toHaveBeenCalled();
+		handleInput?.("q");
+		expect(doneMock).toHaveBeenCalledTimes(1);
+	});
+
 	it("supports custom typing modal when action input is triggered in TUI mode", async () => {
 		const pi = { getAllTools: () => [] };
 		const notifyMock = vi.fn();

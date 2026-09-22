@@ -464,9 +464,9 @@ export async function runImagesCommand(
 						theme && typeof theme.fg === "function"
 							? theme.fg(
 									"dim",
-									"  ↑/↓ navigate · Enter/Space cycle · 'e' edit custom · Esc close",
+									"  ↑/↓ navigate · Enter/Space cycle · 'e' edit custom · Esc/q close",
 								)
-							: "  ↑/↓ navigate · Enter/Space cycle · 'e' edit custom · Esc close",
+							: "  ↑/↓ navigate · Enter/Space cycle · 'e' edit custom · Esc/q close",
 						0,
 						0,
 					),
@@ -505,6 +505,12 @@ export async function runImagesCommand(
 								done({ action: "status" });
 								return;
 							}
+						}
+
+						// Press 'q' or 'Q' to exit (README documents Esc / q)
+						if (data === "q" || data === "Q") {
+							done({ action: "done" });
+							return;
 						}
 
 						// Press 'e' or 'E' to edit editable fields
