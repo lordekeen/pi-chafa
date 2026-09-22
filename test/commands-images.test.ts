@@ -288,6 +288,22 @@ describe("resolveRuntimeCaps", () => {
 			capsSource: "PI_IMAGE_PROTOCOL",
 		});
 	});
+	it("reports none when the #026 environment guard denies a declaration", () => {
+		expect(
+			resolveRuntimeCaps(null, "kitty", "kitty", { TERM_PROGRAM: "alacritty" }, "linux"),
+		).toEqual({ capsImages: null, capsSource: "none" });
+	});
+	it("reports PI_IMAGE_PROTOCOL provenance for the tmux opt-in (#026)", () => {
+		expect(
+			resolveRuntimeCaps(
+				null,
+				"kitty",
+				"kitty",
+				{ TMUX: "/tmp/tmux-1000/default,1,0" },
+				"linux",
+			),
+		).toEqual({ capsImages: "kitty", capsSource: "PI_IMAGE_PROTOCOL" });
+	});
 	it("reports none when no source yields a protocol", () => {
 		expect(resolveRuntimeCaps(null, null, undefined)).toEqual({
 			capsImages: null,

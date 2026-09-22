@@ -39,7 +39,7 @@ const { buildShowImageTool } = await import(pathToFileURL(join(DIST, "show-image
 const { probeChafa, buildSymbolsArgs, cleanSymbolsPayload, runChafa } = await import(pathToFileURL(join(DIST, "chafa.js")).href);
 const { expandTargets, sniffMime, readBytes } = await import(pathToFileURL(join(DIST, "images.js")).href);
 const { readHostImageSettings, resolveConfig, writeConfigFile } = await import(pathToFileURL(join(DIST, "config.js")).href);
-const { resolveCapsImages, decideDelivery } = await import(pathToFileURL(join(DIST, "detect.js")).href);
+const { resolveCapsImages, decideDelivery, isTmux, knownNoImageSupport } = await import(pathToFileURL(join(DIST, "detect.js")).href);
 const require = createRequire(join(REPO, "package.json"));
 const { getCapabilities } = await import(pathToFileURL(require.resolve("@earendil-works/pi-tui")).href);
 
@@ -88,9 +88,11 @@ async function main(work) {
 	execFileSync("magick", [join(work, "img.png"), join(work, "img.gif")]);
 	execFileSync("magick", [join(work, "img.png"), join(work, "img.webp")]);
 	execFileSync("magick", ["-size", "200x1200", "gradient:blue-red", join(work, "tall.png")]);
+	// The prolog + generator-comment prefix is deliberate: it is the shape that
+	// shipped broken in 0.2.0 (#023) and the one real exporters emit.
 	writeFileSync(
 		join(work, "img.svg"),
-		'<svg xmlns="http://www.w3.org/2000/svg" width="120" height="80"><rect width="120" height="80" fill="#3366cc"/><circle cx="60" cy="40" r="24" fill="#ffcc00"/></svg>',
+		'<?xml version="1.0" encoding="UTF-8" standalone="no"?>\n<!-- Generator: pi-chafa smoke -->\n<svg xmlns="http://www.w3.org/2000/svg" width="120" height="80"><rect width="120" height="80" fill="#3366cc"/><circle cx="60" cy="40" r="24" fill="#ffcc00"/></svg>',
 	);
 	magickFixture("bmp", [join(work, "img.png"), join(work, "img.bmp")]);
 	magickFixture("ico", [join(work, "img.png"), "-resize", "32x32", join(work, "img.ico")]);
@@ -139,6 +141,10 @@ async function main(work) {
 		check(`${file} -> ${want}`, got === want, `got ${got}`);
 	}
 	check("unknown.bin -> application/octet-stream", sniffMime(await readBytes(join(work, "unknown.bin"))) === "application/octet-stream");
+	check(
+		"#023: prolog + comment prefix still sniffs as svg",
+		sniffMime(await readBytes(join(work, "img.svg"))) === "image/svg+xml",
+	);
 
 	// --------------------------------------------------------- 3. path/glob fs
 	section("3. real filesystem: expansion");
@@ -169,6 +175,19 @@ async function main(work) {
 	check("all empty -> null", resolveCapsImages(null, null, undefined) === null);
 	check("garbage env -> null", resolveCapsImages(null, null, "nonsense") === null);
 
+	// #026: the environment guard precedes every declaration.
+	check("#026 alacritty denies a declaration", resolveCapsImages(null, "kitty", undefined, { TERM_PROGRAM: "alacritty" }, "linux") === null);
+	check("#026 ALACRITTY_* marker denies a declaration", resolveCapsImages(null, "kitty", undefined, { ALACRITTY_WINDOW_ID: "1" }, "linux") === null);
+	check("#026 VS Code denies PI_IMAGE_PROTOCOL too", resolveCapsImages(null, "kitty", "kitty", { TERM_PROGRAM: "vscode" }, "linux") === null);
+	check("#026 screen denies a declaration", resolveCapsImages(null, "kitty", "kitty", { TERM: "screen-256color" }, "linux") === null);
+	check("#026 win32 denies a declaration", resolveCapsImages(null, "kitty", "kitty", {}, "win32") === null);
+	check("#026 tmux denies ambient declarations", resolveCapsImages("kitty", "kitty", undefined, { TMUX: "/tmp/tmux-1000/default,1,0" }, "linux") === null);
+	check("#026 tmux honors the PI_IMAGE_PROTOCOL opt-in", resolveCapsImages(null, "kitty", "kitty", { TMUX: "/tmp/tmux-1000/default,1,0" }, "linux") === "kitty");
+	check("#026 unknown terminal keeps the declaration", resolveCapsImages(null, "kitty", undefined, { TERM: "xterm-konsole" }, "linux") === "kitty");
+	check("#026 wezterm on win32 is not denied", resolveCapsImages(null, "kitty", undefined, { TERM_PROGRAM: "wezterm" }, "win32") === "kitty");
+	check("#026 isTmux classifies TMUX and TERM=tmux", isTmux({ TMUX: "1" }) && isTmux({ TERM: "tmux-256color" }) && !isTmux({ TERM: "xterm-256color" }));
+	check("#026 knownNoImageSupport leaves unknown terminals alone", !knownNoImageSupport({ TERM: "xterm-256color" }, "linux"));
+
 	// The actual bug: extension misses the host override (caps null), but pi's own
 	// settings say kitty. Must resolve to kitty, not null.
 	const homeDir = join(work, "home");
@@ -187,20 +206,29 @@ async function main(work) {
 	const textOf = (r) => r.content.filter((c) => c.type === "text").map((c) => c.text).join("\n");
 
 	// 5a. The headline regression, using NO injected deps: the real defaultDeps ladder.
-	// In this shell TERM=screen-256color/TERM_PROGRAM=tmux, so getCapabilities().images
-	// is genuinely null — the exact "extension missed the host override" situation.
+	// In a clean environment (no tmux/screen/Alacritty markers) getCapabilities().images
+	// is genuinely null, and pi's terminal.images setting must still resolve native.
+	// Inside a guard-denied environment (#026) the same declaration must instead
+	// resolve symbols and emit no image block — the guard, not the declaration, wins.
 	const capsNow = getCapabilities().images;
-	console.log(`  (env: TERM=${process.env.TERM} TERM_PROGRAM=${process.env.TERM_PROGRAM}; getCapabilities().images=${JSON.stringify(capsNow)}; settings terminal.images=kitty)`);
+	const guardDenies = isTmux(process.env) || knownNoImageSupport(process.env, process.platform);
+	console.log(`  (env: TERM=${process.env.TERM} TERM_PROGRAM=${process.env.TERM_PROGRAM} TMUX=${process.env.TMUX ?? ""}; guard=${guardDenies ? "denies" : "allows"}; getCapabilities().images=${JSON.stringify(capsNow)}; settings terminal.images=kitty)`);
 	const toolReal = buildShowImageTool();
 	const nativeRes = await toolReal.execute("s1", { path: join(work, "img.png") }, undefined, undefined, ctx);
-	check("5a caps really is null here, so the ladder is what resolves", capsNow === null, `caps=${JSON.stringify(capsNow)}`);
-	check("5a native chosen via the settings ladder despite null caps", nativeRes.details.mode === "native", JSON.stringify(nativeRes.details.mode));
-	const imgBlock = nativeRes.content.find((c) => c.type === "image");
-	check("5a image content block emitted", Boolean(imgBlock), JSON.stringify(nativeRes.content.map((c) => c.type)));
-	check("5a image mimeType sniffed correctly", imgBlock?.mimeType === "image/png", String(imgBlock?.mimeType));
-	check("5a base64 round-trips to the real file bytes", Buffer.from(imgBlock?.data ?? "", "base64").equals(readFileSync(join(work, "img.png"))));
-	check("5a text summary has no ANSI", !textOf(nativeRes).includes(ESC));
-	check("5a settings snapshot records the invocation", nativeRes.details.settings.format === "auto");
+	if (guardDenies) {
+		check("5a #026 guard wins over the settings declaration -> symbols", nativeRes.details.mode === "symbols", JSON.stringify(nativeRes.details.mode));
+		check("5a #026 guard emits no image block", !nativeRes.content.some((c) => c.type === "image"), JSON.stringify(nativeRes.content.map((c) => c.type)));
+		check("5a #026 guard still delivers real chafa art", (nativeRes.details.payload ?? "").includes(ESC), `len=${(nativeRes.details.payload ?? "").length}`);
+	} else {
+		check("5a caps really is null here, so the ladder is what resolves", capsNow === null, `caps=${JSON.stringify(capsNow)}`);
+		check("5a native chosen via the settings ladder despite null caps", nativeRes.details.mode === "native", JSON.stringify(nativeRes.details.mode));
+		const imgBlock = nativeRes.content.find((c) => c.type === "image");
+		check("5a image content block emitted", Boolean(imgBlock), JSON.stringify(nativeRes.content.map((c) => c.type)));
+		check("5a image mimeType sniffed correctly", imgBlock?.mimeType === "image/png", String(imgBlock?.mimeType));
+		check("5a base64 round-trips to the real file bytes", Buffer.from(imgBlock?.data ?? "", "base64").equals(readFileSync(join(work, "img.png"))));
+		check("5a text summary has no ANSI", !textOf(nativeRes).includes(ESC));
+		check("5a settings snapshot records the invocation", nativeRes.details.settings.format === "auto");
+	}
 
 	// Seam observation (documented, not a defect): an injected capsImages replaces the
 	// ladder wholesale, so unit tests that inject it cannot exercise the ladder via

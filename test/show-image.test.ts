@@ -180,6 +180,43 @@ describe("summaryText (locked wording, open question 5)", () => {
 			"Showed 3 image(s) to the user via terminal-native rendering. Note: unknown image format.",
 		);
 	});
+	it("mixed native+symbols run names both deliveries, not the session mode (#024)", () => {
+		const files: ShowImageFile[] = [
+			{ path: join(dir, "1.png"), ok: true, mode: "native", mimeType: "image/png" },
+			{ path: join(dir, "2.png"), ok: true, mode: "native", mimeType: "image/png" },
+			{
+				path: join(dir, "3.svg"),
+				ok: true,
+				mode: "symbols",
+				mimeType: "image/svg+xml",
+				note: "showing SVG as ANSI art; native SVG preview needs a rasterizer",
+			},
+		];
+		expect(summaryText(files, "native")).toBe(
+			"Showed 3 image(s) to the user via mixed delivery (2 native, 1 as ANSI art). " +
+				"Note: showing SVG as ANSI art; native SVG preview needs a rasterizer.",
+		);
+	});
+	it("all-native run stays 'via terminal-native rendering' even when session mode differs (#024)", () => {
+		const files: ShowImageFile[] = [
+			{ path: join(dir, "1.png"), ok: true, mode: "native" },
+			{ path: join(dir, "2.png"), ok: true, mode: "native" },
+		];
+		expect(summaryText(files, "symbols")).toBe(
+			"Showed 2 image(s) to the user via terminal-native rendering.",
+		);
+	});
+	it("mixed run with failures keeps the shown-of-total count and the mixed phrase (#006/#024)", () => {
+		const files: ShowImageFile[] = [
+			{ path: join(dir, "1.png"), ok: true, mode: "native" },
+			{ path: join(dir, "2.svg"), ok: true, mode: "symbols" },
+			{ path: join(dir, "3.svg"), ok: false, mode: "native", note: "failed to read" },
+		];
+		expect(summaryText(files, "native")).toBe(
+			"Showed 2 of 3 image(s) to the user via mixed delivery (1 native, 1 as ANSI art). " +
+				"1 file(s) could not be shown.",
+		);
+	});
 	it("omits the Note clause when no shown file carries a note", () => {
 		const files: ShowImageFile[] = [
 			{ path: pngPath, ok: true, mode: "symbols" },

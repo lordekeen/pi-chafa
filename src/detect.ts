@@ -20,30 +20,125 @@ function asNativeProtocol(value: unknown): AgentCapsImages {
 	return value === "kitty" || value === "iterm2" ? value : null;
 }
 
+/** Environment slice the capability ladder reads (a `process.env`-compatible record). */
+export type ImageEnv = Record<string, string | undefined>;
+
+/** Truthy env marker — pi-tui checks values, not mere presence. */
+function envSet(env: ImageEnv, name: string): boolean {
+	return Boolean(env[name]);
+}
+
+/**
+ * Positive image-protocol markers, mirroring pi-tui 0.84.4's detection order:
+ * they are checked before the negative table there, so a genuine protocol
+ * terminal (e.g. WezTerm on Windows, which also sets `WT_SESSION`) is never
+ * denied by an ambient negative marker.
+ */
+function hasPositiveImageMarker(env: ImageEnv): boolean {
+	const termProgram = (env.TERM_PROGRAM ?? "").toLowerCase();
+	const term = (env.TERM ?? "").toLowerCase();
+	return (
+		envSet(env, "KITTY_WINDOW_ID") ||
+		termProgram === "kitty" ||
+		termProgram === "ghostty" ||
+		term.includes("ghostty") ||
+		envSet(env, "GHOSTTY_RESOURCES_DIR") ||
+		envSet(env, "WEZTERM_PANE") ||
+		termProgram === "wezterm" ||
+		termProgram === "warpterminal" ||
+		envSet(env, "WARP_SESSION_ID") ||
+		envSet(env, "WARP_TERMINAL_SESSION_UUID") ||
+		envSet(env, "ITERM_SESSION_ID") ||
+		termProgram === "iterm.app"
+	);
+}
+
+/** True when the environment is tmux (matches pi-tui 0.84.4's `TMUX`/`TERM` check). */
+export function isTmux(env: ImageEnv): boolean {
+	return (
+		envSet(env, "TMUX") || (env.TERM ?? "").toLowerCase().startsWith("tmux")
+	);
+}
+
+/**
+ * Terminals pi-tui 0.84.4 positively knows cannot render image protocols
+ * (#026), plus the Linux Alacritty markers pi-tui misses (it keys Alacritty on
+ * `TERM_PROGRAM`, which Linux Alacritty does not set). Pure: `env` and
+ * `platform` in, decision out.
+ *
+ * `TERM=screen*` is denied before the positive markers, exactly as pi-tui does
+ * (GNU screen does not forward kitty sequences). Unknown terminals are
+ * deliberately **not** denied, so declared protocols stay the escape hatch
+ * (e.g. Konsole). tmux is classified by `isTmux` instead: it can forward kitty
+ * sequences with `allow-passthrough on`, so the ladder keeps
+ * `PI_IMAGE_PROTOCOL` as an explicit opt-in there.
+ */
+export function knownNoImageSupport(env: ImageEnv, platform: string): boolean {
+	const term = (env.TERM ?? "").toLowerCase();
+	if (term.startsWith("screen")) return true;
+	if (hasPositiveImageMarker(env)) return false;
+	const termProgram = (env.TERM_PROGRAM ?? "").toLowerCase();
+	const terminalEmulator = (env.TERMINAL_EMULATOR ?? "").toLowerCase();
+	if (envSet(env, "WT_SESSION")) return true;
+	if (
+		termProgram === "alacritty" ||
+		termProgram === "vscode" ||
+		termProgram === "zed"
+	) {
+		return true;
+	}
+	if (terminalEmulator === "jetbrains-jediterm") return true;
+	if (
+		envSet(env, "ALACRITTY_LOG") ||
+		envSet(env, "ALACRITTY_WINDOW_ID") ||
+		envSet(env, "ALACRITTY_SOCKET")
+	) {
+		return true;
+	}
+	if (platform === "win32") return true;
+	return false;
+}
+
 /**
  * Resolve the effective native-image capability with an instance-independent
  * fallback ladder (spec §7.1 step 3). Priority:
- * 1. pi-tui `getCapabilities().images` when non-null (host truth).
- * 2. pi settings `terminal.images` ("kitty"/"iterm2"; false/"auto"/absent/
+ * 1. **Environment guard (#026):** an environment that positively cannot
+ *    render image protocols returns `null` before any declaration is read;
+ *    under tmux the ambient declarations are ignored but `PI_IMAGE_PROTOCOL`
+ *    remains an explicit opt-in.
+ * 2. pi-tui `getCapabilities().images` when non-null (host truth).
+ * 3. pi settings `terminal.images` ("kitty"/"iterm2"; false/"auto"/absent/
  *    unrecognised → no override, which also covers a user disabling images).
- * 3. `PI_IMAGE_PROTOCOL` when it names "kitty"/"iterm2"; otherwise no override.
- * 4. `null`.
+ * 4. `PI_IMAGE_PROTOCOL` when it names "kitty"/"iterm2"; otherwise no override.
+ * 5. `null`.
  *
- * Pure: all three sources are parameters, so it is testable headlessly and
- * does not depend on which pi-tui module instance happens to be bound (the
+ * Pure: all sources are parameters, so it is testable headlessly and does not
+ * depend on which pi-tui module instance happens to be bound (the
  * dual-instance hazard that made `getCapabilities().images` report `null`).
  */
 export function resolveCapsImages(
 	caps: AgentCapsImages,
 	hostImages: unknown,
 	envProtocol: string | undefined,
+	env: ImageEnv = {},
+	platform: string = "",
 ): AgentCapsImages {
+	const fromEnv = asNativeProtocol(
+		typeof envProtocol === "string" ? envProtocol.trim() : envProtocol,
+	);
+	if (isTmux(env)) {
+		// tmux can forward kitty sequences only with `allow-passthrough on`, so the
+		// explicit per-session env override stays an opt-in; the ambient
+		// declarations (host caps from setCapabilityOverrides and the persistent
+		// terminal.images setting) are what produce blank output and are not
+		// trusted (#026).
+		return fromEnv;
+	}
+	if (knownNoImageSupport(env, platform)) return null;
 	if (caps !== null) return caps;
 	const fromHost = asNativeProtocol(hostImages);
 	if (fromHost !== null) return fromHost;
-	return asNativeProtocol(
-		typeof envProtocol === "string" ? envProtocol.trim() : envProtocol,
-	);
+	return fromEnv;
 }
 
 /**

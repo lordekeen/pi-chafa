@@ -245,12 +245,38 @@ describe("readBytes + sniffMime", () => {
 			),
 		).toBe("image/svg+xml");
 	});
+	it("tolerates comments in the pre-element prefix, any order or count (#023)", () => {
+		const docs = [
+			'<?xml version="1.0" encoding="UTF-8" standalone="no"?>\n<!-- Generator: Adobe -->\n<svg xmlns="x"></svg>',
+			'<?xml version="1.0"?>\n<!DOCTYPE svg>\n<!-- c -->\n<svg></svg>',
+			'\uFEFF<?xml version="1.0"?>\n<!-- c -->\n<svg></svg>',
+			"<!-- c -->\n<svg></svg>",
+			"<!-- a --><!-- b -->\n<!DOCTYPE svg>\n<?xml version=\"1.0\"?>\n<svg></svg>",
+		];
+		for (const doc of docs) {
+			expect(sniffMime(Buffer.from(doc))).toBe("image/svg+xml");
+		}
+	});
 	it("does not treat text that merely mentions svg as an image (#014)", () => {
 		expect(sniffMime(Buffer.from("hello <svg world"))).toBe("application/octet-stream");
 		expect(sniffMime(Buffer.from('<?xml version="1.0"?><not-an-svg/>'))).toBe(
 			"application/octet-stream",
 		);
 		expect(sniffMime(Buffer.from("<svgfoo></svgfoo>"))).toBe("application/octet-stream");
+	});
+	it("keeps the #014 decoy strictness after stripping the prefix (#023)", () => {
+		expect(
+			sniffMime(Buffer.from('<?xml version="1.0"?><!-- c --><not-an-svg/>')),
+		).toBe("application/octet-stream");
+		expect(sniffMime(Buffer.from("<!-- c -->\n<svgfoo></svgfoo>"))).toBe(
+			"application/octet-stream",
+		);
+		expect(sniffMime(Buffer.from("hello <!-- c --> <svg></svg>"))).toBe(
+			"application/octet-stream",
+		);
+		expect(sniffMime(Buffer.from("<!-- unterminated <svg></svg>"))).toBe(
+			"application/octet-stream",
+		);
 	});
 	it("reads bytes from a real file", async () => {
 		const bytes = await readBytes(join(dir, "notes.txt"));

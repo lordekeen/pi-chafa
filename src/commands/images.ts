@@ -23,7 +23,7 @@ import {
 	readHostImageSettings,
 	writeConfigFile,
 } from "../config.js";
-import { resolveCapsImages } from "../detect.js";
+import { isTmux, resolveCapsImages } from "../detect.js";
 import { stripControls } from "../show-image.js";
 import {
 	type AgentCapsImages,
@@ -101,20 +101,31 @@ export interface RuntimeFacts {
 
 /**
  * Resolve the effective native-image capability with the same exported ladder
- * show_image uses (§6.4: getCapabilities() → host terminal.images →
- * PI_IMAGE_PROTOCOL), plus the provenance of whichever source won. The panel
- * is diagnostic: the raw caps singleton can read `null` while native delivery
- * still works via a host setting or the env var.
+ * show_image uses (§6.4: #026 environment guard → getCapabilities() → host
+ * terminal.images → PI_IMAGE_PROTOCOL), plus the provenance of whichever
+ * source won. The panel is diagnostic: the raw caps singleton can read `null`
+ * while native delivery still works via a host setting or the env var.
  */
 export function resolveRuntimeCaps(
 	hostCaps: AgentCapsImages,
 	hostImages: AgentCapsImages,
 	envProtocol: string | undefined,
+	env: Record<string, string | undefined> = {},
+	platform: string = "",
 ): RuntimeCaps {
-	const capsImages = resolveCapsImages(hostCaps, hostImages, envProtocol);
+	const capsImages = resolveCapsImages(
+		hostCaps,
+		hostImages,
+		envProtocol,
+		env,
+		platform,
+	);
 	if (capsImages === null) return { capsImages: null, capsSource: "none" };
+	// Under tmux the ladder ignores caps/settings (#026), so a non-null value can
+	// only have come from the explicit PI_IMAGE_PROTOCOL opt-in.
+	if (isTmux(env)) return { capsImages, capsSource: "PI_IMAGE_PROTOCOL" };
 	if (hostCaps !== null) return { capsImages, capsSource: "getCapabilities()" };
-	if (resolveCapsImages(null, hostImages, undefined) !== null)
+	if (resolveCapsImages(null, hostImages, undefined, env, platform) !== null)
 		return { capsImages, capsSource: "terminal.images" };
 	return { capsImages, capsSource: "PI_IMAGE_PROTOCOL" };
 }
@@ -437,6 +448,8 @@ async function buildRuntimeFacts(
 		deps.capsImages(),
 		hostImages.images,
 		process.env.PI_IMAGE_PROTOCOL,
+		process.env,
+		process.platform,
 	);
 	const chafa = await probeToFact(config.binaryPath, deps.probeChafa);
 	return collectRuntimeFacts(pi, caps, hostImages.showImages, chafa);

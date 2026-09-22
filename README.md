@@ -115,7 +115,7 @@ Precedence is always **tool params > `CHAFA_*` env > config file > defaults** (f
 | `CHAFA_TIMEOUT_MS` | `timeoutMs` | Integer ms. |
 | `CHAFA_CONFIG_DIR` | config location | Override for `pi-chafa.json`; defaults to `~/.pi/agent`. |
 
-pi's image capability is resolved (read-only) through an explicit ladder, in priority order: `getCapabilities().images` → pi's settings `terminal.images` (`"kitty"`/`"iterm2"`; `false`, `"auto"`, absent, or unrecognised all mean "no override") → `PI_IMAGE_PROTOCOL` → `null` (Chafa symbols). `terminal.showImages` and `terminal.imageWidthCells` are also read; nothing in pi's settings is ever written.
+pi's image capability is resolved (read-only) through an explicit ladder, in priority order: an **environment guard** (#026 — terminals known to be unable to render images, i.e. Alacritty, VS Code, Zed, JetBrains, Windows Terminal, GNU screen and `win32`, always resolve to Chafa symbols; under tmux ambient declarations are ignored while `PI_IMAGE_PROTOCOL` stays an explicit opt-in) → `getCapabilities().images` → pi's settings `terminal.images` (`"kitty"`/`"iterm2"`; `false`, `"auto"`, absent, or unrecognised all mean "no override") → `PI_IMAGE_PROTOCOL` → `null` (Chafa symbols). `terminal.showImages` and `terminal.imageWidthCells` are also read; nothing in pi's settings is ever written.
 
 ## Limitations (v1)
 
@@ -131,6 +131,7 @@ pi's image capability is resolved (read-only) through an explicit ladder, in pri
 - **Blank / wrong-color symbols** on a non-truecolor terminal → set `colors` to `16` or `8`.
 - **Kitty shows a caption but no image for a JPEG/GIF/WebP** → host PNG conversion limitation; pass `format: "symbols"`.
 - **Terminal supports Kitty graphics (e.g. Konsole) but renders ANSI symbols** → pi's auto-detection only recognizes `kitty`, `ghostty`, `wezterm`, and `warp`. Override via `export PI_IMAGE_PROTOCOL=kitty` or set `"terminal": { "images": "kitty" }` in `~/.pi/agent/settings.json`.
+- **A declared `terminal.images` is ignored** → pi-chafa refuses declarations in terminals known to be unable to render image protocols (Alacritty, VS Code, Zed, JetBrains, Windows Terminal, GNU screen, `win32`). Under tmux only `PI_IMAGE_PROTOCOL` can force native (via kitty passthrough); `terminal.images` is deliberately ignored there because a stale declaration is what produced blank output. See #026.
 
 ## License
 

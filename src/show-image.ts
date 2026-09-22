@@ -120,6 +120,8 @@ function defaultDeps(): ShowImageDeps {
 				getCapabilities().images,
 				readHostImageSettings().images,
 				process.env.PI_IMAGE_PROTOCOL,
+				process.env,
+				process.platform,
 			),
 		expandTargets,
 		readBytes,
@@ -201,8 +203,23 @@ export function summaryText(
 	const failed = files.length - shown.length;
 	const firstPath = (shown[0] ?? files[0])?.path ?? "";
 	const name = stripControls(basenameOf(firstPath));
-	const label =
-		mode === "native" ? "via terminal-native rendering" : "as ANSI art";
+	// The delivery phrase describes the files actually shown, never the session
+	// mode: a native session degrades SVG/BMP/ICO/AVIF to symbols (#014/#015),
+	// and a header claiming terminal-native rendering for ANSI art would
+	// contradict the degrade note in the same sentence (#024). `mode` is only
+	// the fallback when no file carries a delivery mode (empty run).
+	const nativeShown = shown.filter((file) => file.mode === "native").length;
+	const symbolsShown = shown.filter((file) => file.mode === "symbols").length;
+	let label: string;
+	if (nativeShown > 0 && symbolsShown > 0) {
+		label = `via mixed delivery (${nativeShown} native, ${symbolsShown} as ANSI art)`;
+	} else if (nativeShown > 0) {
+		label = "via terminal-native rendering";
+	} else if (symbolsShown > 0) {
+		label = "as ANSI art";
+	} else {
+		label = mode === "native" ? "via terminal-native rendering" : "as ANSI art";
+	}
 
 	// Shown-file notes (unknown mime, no output, maxRows cap) belong on the
 	// model-visible surface (spec §8). Sanitize (AGENTS.md invariant 3),
@@ -296,7 +313,7 @@ export function buildShowImageTool(
 		name: "show_image",
 		label: "Show Image",
 		description:
-			"Display one or more image files to the USER in the terminal. Use when the user asks to see/preview a picture, screenshot, plot, icon, or diagram, or when showing an image would help the user understand the task. The image is rendered for the user only; you do not receive its contents.",
+			"Display one or more image files to the USER in the terminal. Use when the user asks to see/preview a picture, screenshot, plot, icon, or diagram, or when showing an image would help the user understand the task. The image is rendered for the user; symbols delivery returns only a text summary, while a native image block may be attached to a vision-capable model.",
 		parameters: showImageParams,
 		renderShell: "default",
 		renderCall: (args: ShowImageParams) => renderShowCall(args),

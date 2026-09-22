@@ -250,22 +250,25 @@ export function sniffMime(bytes: Buffer): string {
 			if (brand === "avif" || brand === "avis") return "image/avif";
 		}
 	}
-	// SVG: text whose first element is <svg>, tolerating a BOM, leading
-	// whitespace, an XML prolog and a DOCTYPE. Deliberately strict about the
-	// element name (never `<svgfoo`) and about `<svg` appearing only later in
-	// the text, so a document that merely mentions SVG stays octet-stream — #014.
-	const head = bytes
-		.subarray(0, 512)
-		.toString("utf8")
-		.replace(/^\uFEFF/, "")
-		.trimStart();
-	if (/^<svg[\s/>]/i.test(head)) return "image/svg+xml";
-	if (head.startsWith("<?xml")) {
-		const firstElement = head
+	// SVG: text whose first element is <svg>, tolerating an ignorable prefix in
+	// any order and any count — a BOM, whitespace, XML prologs, DOCTYPEs and
+	// comments (the prolog+generator-comment shape most real-world exporters
+	// emit, which the single-pass form missed; #023). Deliberately strict about
+	// the element name (never `<svgfoo`) and about `<svg` appearing only later
+	// in the text, so a document that merely mentions SVG stays octet-stream — #014.
+	let rest = bytes.subarray(0, 512).toString("utf8");
+	if (rest.startsWith("\uFEFF")) rest = rest.slice(1);
+	// Bounded: the 512-byte window already caps the scan, and the loop stops as
+	// soon as the prefix stops shrinking, so a malformed prefix cannot spin.
+	for (let stripped = 0; stripped < 32; stripped += 1) {
+		const before = rest;
+		rest = rest
+			.replace(/^\s+/, "")
 			.replace(/^<\?xml[\s\S]*?\?>/, "")
-			.replace(/^\s*<!DOCTYPE[\s\S]*?>/i, "")
-			.trimStart();
-		if (/^<svg[\s/>]/i.test(firstElement)) return "image/svg+xml";
+			.replace(/^<!DOCTYPE[\s\S]*?>/i, "")
+			.replace(/^<!--[\s\S]*?-->/, "");
+		if (rest === before) break;
 	}
+	if (/^<svg[\s/>]/i.test(rest)) return "image/svg+xml";
 	return "application/octet-stream";
 }

@@ -5,7 +5,12 @@ description: Show image files to the user in the terminal with the show_image to
 
 # pi-chafa — showing images to the user
 
-`show_image` renders image files **for the user only**. It is a UI/UX feature, not a vision feature: you never receive the image contents or a description of them, so never claim to know what an image depicts.
+`show_image` renders image files **for the user**. It is a UI/UX feature, not a vision feature, and what (if anything) reaches *you* depends on the delivery mode named in the result summary:
+
+- **as ANSI art** (Chafa symbols): you receive only the plain-text summary — no image bytes, no base64, no description, no ANSI art.
+- **via terminal-native rendering**, or a **mixed delivery** run: the extension emitted `{type:"image"}` blocks in the tool result, and pi's host may attach them to you when you run on a vision-capable model. That is the host's decision, not a guarantee.
+
+So never claim to know what an image depicts unless a vision path actually showed it to you.
 
 ## When to call `show_image`
 
@@ -17,11 +22,11 @@ description: Show image files to the user in the terminal with the show_image to
 
 - Textual inspection of a file → use `read`, not `show_image`.
 - You need file metadata (size, dates) → use `ls` or `read`.
-- You must interpret the image's contents → **you cannot read pixels**: `show_image` never returns image content to you. If a vision-capable path exists (see below), use it; otherwise say plainly that you cannot inspect the contents and offer to display the file for the user.
+- You must interpret the image's contents → do not assume `show_image` is a vision path: symbols delivery returns text only, and a native image block only reaches you if the host attached it. Use the dedicated vision route below; otherwise say plainly that you cannot inspect the contents and offer to display the file for the user.
 
 ## Interpreting image contents (vision)
 
-`show_image` is strictly for presenting an image to the **human user**. The bytes never enter your context — no base64, no description, no ANSI art. So when a request needs *interpretation* (describe, audit, OCR, "what's wrong in this screenshot"):
+`show_image` is strictly for presenting an image to the **human user**, so treat its result as unproven vision: on the symbols path you receive only the text summary (no base64, no description, no ANSI art), and on the native path the tool result carries image blocks that may or may not be attached to you. When a request needs *interpretation* (describe, audit, OCR, "what's wrong in this screenshot"):
 
 - **Dispatch the work to a vision-capable subagent** when one is listed (e.g. `designer`, which runs a vision model). That child reads the file itself; it does not gain vision by calling `show_image` either.
 - **`pi-vision-handoff` is user-initiated.** It registers a `/vision-handoff` slash command for the *user* to attach an image and hand it to the configured vision model. It exposes no model-callable "describe this path" tool, so do not claim you will use it — ask the user to run it instead.
