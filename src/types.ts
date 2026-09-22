@@ -36,6 +36,12 @@ export interface ChafaVersion {
 export interface ChafaProbe {
 	binary: string;
 	version: ChafaVersion;
+	/**
+	 * Loader names reported by `chafa --version`'s `Loaders:` line, normalized to
+	 * upper case; `null` when the line is absent or empty — never guessed (#015).
+	 * '#'-prefixed (disabled) entries are excluded.
+	 */
+	loaders: string[] | null;
 }
 
 /**

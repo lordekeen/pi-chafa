@@ -116,6 +116,47 @@ describe("probeChafa", () => {
 		);
 		expect((err as Error).name).toBe("AbortError");
 	});
+	it("parses the Loaders line into a normalized upper-case list (#015)", async () => {
+		const mockExec = vi.fn(async () => ({
+			stdout:
+				"Chafa version 1.18.2\n\nLoaders:  AVIF GIF HEIF JPEG JXL PNG QOI SVG TIFF WebP XWD\nFeatures: mmx sse4.1\n",
+			stderr: "",
+		}));
+		const probe = await probeChafa(null, mockExec as never);
+		expect(probe.loaders).toEqual([
+			"AVIF",
+			"GIF",
+			"HEIF",
+			"JPEG",
+			"JXL",
+			"PNG",
+			"QOI",
+			"SVG",
+			"TIFF",
+			"WEBP",
+			"XWD",
+		]);
+	});
+	it("upper-cases mixed-case loader names", async () => {
+		const mockExec = vi.fn(async () => ({
+			stdout: "Chafa version 1.18.2\nLoaders: avif Png\n",
+			stderr: "",
+		}));
+		expect((await probeChafa(null, mockExec as never)).loaders).toEqual(["AVIF", "PNG"]);
+	});
+	it("excludes '#'-disabled loaders rather than assuming they exist", async () => {
+		const mockExec = vi.fn(async () => ({
+			stdout: "Chafa version 1.18.2\nLoaders: AVIF #BMP PNG\n",
+			stderr: "",
+		}));
+		expect((await probeChafa(null, mockExec as never)).loaders).toEqual(["AVIF", "PNG"]);
+	});
+	it("reports loaders as null when the Loaders line is absent — never guesses (#015)", async () => {
+		const mockExec = vi.fn(async () => ({ stdout: "Chafa version 1.18.2\n", stderr: "" }));
+		expect((await probeChafa(null, mockExec as never)).loaders).toBe(null);
+		const empty = vi.fn(async () => ({ stdout: "Chafa version 1.18.2\nLoaders:\n", stderr: "" }));
+		expect((await probeChafa(null, empty as never)).loaders).toBe(null);
+	});
 });
 
 describe("createCachedProbe (#007, #008)", () => {

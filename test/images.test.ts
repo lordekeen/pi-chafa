@@ -159,6 +159,72 @@ describe("readBytes + sniffMime", () => {
 	it("falls back to application/octet-stream for unknown bytes", () => {
 		expect(sniffMime(Buffer.from("hello world"))).toBe("application/octet-stream");
 	});
+	const BMP = Buffer.from([0x42, 0x4d, 0x36, 0x00, 0x00, 0x00, 0x00, 0x00]);
+	const ICO = Buffer.from([0x00, 0x00, 0x01, 0x00, 0x01, 0x00, 0x10, 0x10]);
+	const AVIF = Buffer.concat([
+		Buffer.from([0x00, 0x00, 0x00, 0x20]),
+		Buffer.from("ftyp", "ascii"),
+		Buffer.from("avif", "ascii"),
+		Buffer.from([0x00, 0x00, 0x00, 0x00]),
+	]);
+	const AVIF_SEQUENCE = Buffer.concat([
+		Buffer.from([0x00, 0x00, 0x00, 0x20]),
+		Buffer.from("ftyp", "ascii"),
+		Buffer.from("avis", "ascii"),
+		Buffer.from([0x00, 0x00, 0x00, 0x00]),
+	]);
+	it("sniffs bmp/ico/avif magic bytes (#015)", () => {
+		expect(sniffMime(BMP)).toBe("image/bmp");
+		expect(sniffMime(ICO)).toBe("image/x-icon");
+		expect(sniffMime(AVIF)).toBe("image/avif");
+		expect(sniffMime(AVIF_SEQUENCE)).toBe("image/avif");
+	});
+	it("accepts an avif brand in the ftyp compatible-brands list (conservatively)", () => {
+		const compatible = Buffer.concat([
+			Buffer.from([0x00, 0x00, 0x00, 0x20]),
+			Buffer.from("ftyp", "ascii"),
+			Buffer.from("mif1", "ascii"),
+			Buffer.from([0x00, 0x00, 0x00, 0x00]),
+			Buffer.from("avif", "ascii"),
+		]);
+		expect(sniffMime(compatible)).toBe("image/avif");
+	});
+	it("does not mistake another BMFF brand for avif (#015)", () => {
+		const mp4 = Buffer.concat([
+			Buffer.from([0x00, 0x00, 0x00, 0x18]),
+			Buffer.from("ftyp", "ascii"),
+			Buffer.from("mp42", "ascii"),
+			Buffer.from([0x00, 0x00, 0x00, 0x00]),
+		]);
+		expect(sniffMime(mp4)).toBe("application/octet-stream");
+	});
+	it("sniffs svg with and without a prolog, BOM, or doctype (#014)", () => {
+		expect(sniffMime(Buffer.from('<svg xmlns="http://www.w3.org/2000/svg"></svg>'))).toBe(
+			"image/svg+xml",
+		);
+		expect(
+			sniffMime(
+				Buffer.from('<?xml version="1.0" encoding="UTF-8"?>\n<svg xmlns="x"></svg>'),
+			),
+		).toBe("image/svg+xml");
+		expect(sniffMime(Buffer.from("\uFEFF\n  <svg viewBox=\"0 0 1 1\"></svg>"))).toBe(
+			"image/svg+xml",
+		);
+		expect(
+			sniffMime(
+				Buffer.from(
+					'<?xml version="1.0"?><!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.1//EN" "http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd"><svg></svg>',
+				),
+			),
+		).toBe("image/svg+xml");
+	});
+	it("does not treat text that merely mentions svg as an image (#014)", () => {
+		expect(sniffMime(Buffer.from("hello <svg world"))).toBe("application/octet-stream");
+		expect(sniffMime(Buffer.from('<?xml version="1.0"?><not-an-svg/>'))).toBe(
+			"application/octet-stream",
+		);
+		expect(sniffMime(Buffer.from("<svgfoo></svgfoo>"))).toBe("application/octet-stream");
+	});
 	it("reads bytes from a real file", async () => {
 		const bytes = await readBytes(join(dir, "notes.txt"));
 		expect(bytes.toString("utf8")).toBe("text");

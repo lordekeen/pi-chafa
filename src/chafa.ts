@@ -129,6 +129,22 @@ function abortReason(signal: AbortSignal): Error {
 }
 
 /**
+ * Parse chafa's `Loaders:` line into a normalized upper-case list (#015).
+ * Returns `null` when the line is absent or names nothing usable — callers must
+ * treat that as "unknown", never as "no loaders", and let chafa report.
+ * `#`-prefixed entries are excluded: chafa marks disabled loaders that way.
+ */
+function parseLoaders(stdout: string): string[] | null {
+	const match = /^Loaders:[ \t]*(.*)$/m.exec(stdout);
+	if (!match) return null;
+	const loaders = (match[1] as string)
+		.split(/\s+/)
+		.filter((token) => token !== "" && !token.startsWith("#"))
+		.map((token) => token.toUpperCase());
+	return loaders.length > 0 ? loaders : null;
+}
+
+/**
  * Resolve the chafa binary (CHAFA_BIN/config binaryPath else "chafa" on PATH)
  * and verify its version meets MIN_CHAFA_VERSION. Throws actionable errors.
  * `execOverride` exists for tests; production uses node:child_process.
@@ -191,7 +207,7 @@ export async function probeChafa(
 				`or point CHAFA_BIN at a newer binary.`,
 		);
 	}
-	return { binary, version };
+	return { binary, version, loaders: parseLoaders(stdout) };
 }
 
 /** The `probeChafa` call signature plus the test-only cache reset. */

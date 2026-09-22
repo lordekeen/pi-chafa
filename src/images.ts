@@ -194,5 +194,53 @@ export function sniffMime(bytes: Buffer): string {
 	) {
 		return "image/webp";
 	}
+	// BMP ("BM") — #015
+	if (bytes.length >= 2 && bytes[0] === 0x42 && bytes[1] === 0x4d) {
+		return "image/bmp";
+	}
+	// ICO (00 00 01 00) — #015
+	if (
+		bytes.length >= 4 &&
+		bytes[0] === 0x00 &&
+		bytes[1] === 0x00 &&
+		bytes[2] === 0x01 &&
+		bytes[3] === 0x00
+	) {
+		return "image/x-icon";
+	}
+	// AVIF: an ISO-BMFF ftyp box whose major brand is avif/avis, or that lists
+	// one in its compatible-brands region (bounded to the box and 512 bytes so a
+	// stray "avif" string in another container cannot match) — #015.
+	if (bytes.length >= 12 && bytes.subarray(4, 8).toString("ascii") === "ftyp") {
+		const major = bytes.subarray(8, 12).toString("ascii");
+		if (major === "avif" || major === "avis") return "image/avif";
+		const boxSize = bytes.readUInt32BE(0);
+		const end = Math.min(
+			bytes.length,
+			boxSize >= 16 ? boxSize : bytes.length,
+			512,
+		);
+		for (let offset = 16; offset + 4 <= end; offset += 4) {
+			const brand = bytes.subarray(offset, offset + 4).toString("ascii");
+			if (brand === "avif" || brand === "avis") return "image/avif";
+		}
+	}
+	// SVG: text whose first element is <svg>, tolerating a BOM, leading
+	// whitespace, an XML prolog and a DOCTYPE. Deliberately strict about the
+	// element name (never `<svgfoo`) and about `<svg` appearing only later in
+	// the text, so a document that merely mentions SVG stays octet-stream — #014.
+	const head = bytes
+		.subarray(0, 512)
+		.toString("utf8")
+		.replace(/^\uFEFF/, "")
+		.trimStart();
+	if (/^<svg[\s/>]/i.test(head)) return "image/svg+xml";
+	if (head.startsWith("<?xml")) {
+		const firstElement = head
+			.replace(/^<\?xml[\s\S]*?\?>/, "")
+			.replace(/^\s*<!DOCTYPE[\s\S]*?>/i, "")
+			.trimStart();
+		if (/^<svg[\s/>]/i.test(firstElement)) return "image/svg+xml";
+	}
 	return "application/octet-stream";
 }
