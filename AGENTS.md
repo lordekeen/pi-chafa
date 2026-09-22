@@ -9,6 +9,10 @@ Project context and rules for AI agents working in this repository. Read this be
 - Everywhere else (tmux, Alacritty, VS Code, screen, plain SSH, Windows console), it converts images to ANSI/Unicode symbol art using system **Chafa** (≥ 1.10.0).
 - Bundles a skill ([`SKILL.md`](skills/pi-chafa/SKILL.md)) and the [`/images`](src/commands/images.ts) slash command for tuning runtime defaults.
 
+## Spec conflict rule
+
+The spec is **authoritative, but not frozen**. A change that contradicts the spec must amend the spec in the *same* change; never silently override it. The plan or task that ships the behavior carries the spec edit, so the tree never contains a behavior the spec denies (see "Spec wins in any conflict" in the Files & Architecture table).
+
 ## Non-negotiable invariants
 
 1. **UI/UX feature, NOT model vision:** The model never sees the image bytes, base64 payloads, or ANSI art. The tool returns a short summary text for model context; image payloads are delivered solely to the user's terminal.
@@ -35,7 +39,7 @@ Project context and rules for AI agents working in this repository. Read this be
 | [`src/commands/images.ts`](src/commands/images.ts) | `/images` slash command panel, terminal capability inspector, and interactive settings menu. |
 | [`skills/pi-chafa/SKILL.md`](skills/pi-chafa/SKILL.md) | Bundled skill auto-discovered by pi, guiding models on when to call `show_image`. |
 | [`scripts/smoke.mjs`](scripts/smoke.mjs) | Opt-in real-dependency smoke runner (`npm run test:smoke`): builds `dist/` then drives it against the real chafa binary, the real filesystem, and the real capability ladder. Not published — `scripts/` is outside the `files` allowlist. |
-| [`docs/spec/2026-09-03-pi-chafa-extension-design.md`](docs/spec/2026-09-03-pi-chafa-extension-design.md) | Authoritative design specification. Spec wins in any conflict. |
+| [`docs/spec/2026-09-03-pi-chafa-extension-design.md`](docs/spec/2026-09-03-pi-chafa-extension-design.md) | Authoritative design specification. Spec wins in any conflict — amend it in the same change (see "Spec conflict rule" above). |
 
 ## Verification Gates
 
