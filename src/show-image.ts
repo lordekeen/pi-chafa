@@ -8,7 +8,7 @@ import { type Static, Type } from "typebox";
 import {
 	buildSymbolsArgs,
 	cleanSymbolsPayload,
-	probeChafa,
+	createCachedProbe,
 	runChafa,
 } from "./chafa.js";
 import { readHostImageSettings, resolveConfig } from "./config.js";
@@ -17,6 +17,7 @@ import { expandTargets, readBytes, sniffMime } from "./images.js";
 import type {
 	AgentCapsImages,
 	ChafaOverrides,
+	ChafaProbe,
 	DeliveryMode,
 	HostImageSettings,
 	ResolvedConfig,
@@ -84,7 +85,8 @@ export interface ShowImageDeps {
 	sniffMime: (bytes: Buffer) => string;
 	probeChafa: (
 		binaryPath: string | null,
-	) => Promise<{ binary: string; version: { major: number; minor: number } }>;
+		signal?: AbortSignal,
+	) => Promise<ChafaProbe>;
 	runChafa: (
 		binary: string,
 		args: string[],
@@ -94,6 +96,10 @@ export interface ShowImageDeps {
 }
 
 function defaultDeps(): ShowImageDeps {
+	// One success-only probe cache per tool instance (#007): repeat invocations
+	// in a session never respawn `chafa --version`, while a failed probe is
+	// retried so a missing-then-installed chafa recovers.
+	const cachedProbe = createCachedProbe();
 	return {
 		resolveConfig,
 		readHostImages: readHostImageSettings,
@@ -111,7 +117,7 @@ function defaultDeps(): ShowImageDeps {
 		expandTargets,
 		readBytes,
 		sniffMime,
-		probeChafa,
+		probeChafa: (binaryPath, signal) => cachedProbe(binaryPath, signal),
 		runChafa,
 		cleanPayload: cleanSymbolsPayload,
 	};
@@ -357,7 +363,7 @@ export function buildShowImageTool(
 			// probe result is the single source of truth for the binary path.
 			let chafaBinary = "chafa";
 			if (mode === "symbols") {
-				const probe = await d.probeChafa(resolved.symbols.binaryPath);
+				const probe = await d.probeChafa(resolved.symbols.binaryPath, signal);
 				chafaBinary = probe.binary;
 			}
 

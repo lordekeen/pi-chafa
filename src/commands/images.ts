@@ -16,7 +16,7 @@ import {
 	Spacer,
 	Text,
 } from "@earendil-works/pi-tui";
-import { probeChafa } from "../chafa.js";
+import { createCachedProbe } from "../chafa.js";
 import {
 	getConfigDir,
 	loadConfig,
@@ -346,11 +346,17 @@ export function applyMenuChange(
 	}
 }
 
+// Module-level success-only cache (#007): an /images panel opened repeatedly
+// reuses the first successful probe instead of respawning `chafa --version`.
+// Kept separate from the tool's per-instance cache so a panel probe can never
+// be poisoned by a transient tool-side failure path (rejections are not cached).
+const cachedProbe = createCachedProbe();
+
 async function probeToFact(
 	binaryPath: string | null,
 ): Promise<RuntimeFacts["chafa"]> {
 	try {
-		const probe = await probeChafa(binaryPath);
+		const probe = await cachedProbe(binaryPath);
 		return {
 			present: true,
 			binary: probe.binary,

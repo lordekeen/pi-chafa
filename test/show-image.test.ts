@@ -62,7 +62,7 @@ function makeTool(overrides: {
 	format?: "auto" | "native" | "symbols";
 	hasUI?: boolean;
 	runStdout?: string;
-	probeChafa?: () => Promise<{ binary: string; version: { major: number; minor: number } }>;
+	probeChafa?: ShowImageDeps["probeChafa"];
 	runChafa?: ShowImageDeps["runChafa"];
 	sniffMime?: ShowImageDeps["sniffMime"];
 } = {}) {
@@ -286,6 +286,22 @@ describe("show_image execute — symbols path", () => {
 			);
 		expect((err as Error).name).toBe("AbortError");
 	});
+});
+
+describe("probe plumbing (#007/#008)", () => {
+it("passes the tool abort signal into the chafa probe", async () => {
+const controller = new AbortController();
+let seen: AbortSignal | undefined;
+const { tool, ctx } = makeTool({
+capsImages: null,
+probeChafa: async (_binaryPath, signal) => {
+seen = signal;
+return { binary: "/usr/bin/chafa", version: { major: 1, minor: 18 } };
+},
+});
+await tool.execute("t20", { path: "pic.png" }, controller.signal, noop as never, ctx);
+expect(seen).toBe(controller.signal);
+});
 });
 
 describe("show_image execute — no-UI degrade (spec §7.5)", () => {
