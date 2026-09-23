@@ -16,7 +16,7 @@ The spec is **authoritative, but not frozen**. A change that contradicts the spe
 ## Non-negotiable invariants
 
 1. **UI/UX feature, NOT model vision:** The extension never puts image bytes, base64 payloads, or ANSI art into model-visible **text**. Plain-text tool output is a short summary; ANSI art lives only in `details.payload` for the custom `renderResult` component, so symbols delivery returns the model nothing but text. Native delivery (provider-safe mimes only, spec §7.4) does put `{type:"image", data, mimeType}` blocks in the tool result, and pi's host may attach those blocks to a vision-capable model — that is the host's pipeline, not the extension's, and the model must not assume either way.
-2. **Strict ANSI separation:** Plain-text tool output passes through pi's host `getTextOutput()` which strips ANSI. Colored ANSI art must *only* be returned inside a custom [`renderResult`](src/show-image.ts) component returning pi-tui [`Text`](src/show-image.ts).
+2. **Strict ANSI separation:** Plain-text tool output passes through pi's host `getTextOutput()` which strips ANSI. Colored ANSI art must *only* be returned inside a custom [`renderResult`](src/show-image.ts) component (a pi-tui `Container`/`Text` tree) and must render **outside** the tool row's themed background (`renderShell: "self"`, #027) so transparent pixels show the terminal background.
 3. **Zero terminal pollution:**
    - Raw Chafa output must never emit screen clears (`--clear` forbidden).
    - Cursor toggle sequences must be cleanly stripped via [`cleanSymbolsPayload`](src/chafa.ts).

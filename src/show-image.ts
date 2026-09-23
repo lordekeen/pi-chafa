@@ -3,7 +3,13 @@ import type {
 	ExtensionContext,
 	ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
-import { getCapabilities, Text } from "@earendil-works/pi-tui";
+import {
+	type Component,
+	Container,
+	getCapabilities,
+	Spacer,
+	Text,
+} from "@earendil-works/pi-tui";
 import { type Static, Type } from "typebox";
 import {
 	buildSymbolsArgs,
@@ -261,34 +267,96 @@ export function textFromContent(
 	return texts.join("\n");
 }
 
-/** User-visible text for a completed result: summary caption + symbols payload (spec §4.1.3). */
-export function displayText(
-	summary: string,
-	details: ShowImageDetails | undefined,
-): string {
-	if (!details?.payload) return summary;
-	return `${summary}\n${details.payload}`;
+/**
+ * pi-tui theme subset the renderers use (spec §4.1.3). Structural, so tests can
+ * inject an identity or recording theme without a real pi theme instance.
+ */
+export interface RenderThemeLike {
+	bg(
+		color: "toolPendingBg" | "toolSuccessBg" | "toolErrorBg",
+		text: string,
+	): string;
 }
 
-/** renderCall: compact "Show Image <target>" (spec §4.1 registration table). */
-export function renderShowCall(args: ShowImageParams): Text {
-	const target = stripControls((args.path ?? args.glob ?? "").trim());
-	return new Text(`Show Image ${target}`, 0, 0);
+/** pi render-context subset the renderers use (a `ToolRenderContext` slice). */
+export interface RenderStateLike {
+	isPartial: boolean;
+	isError: boolean;
 }
 
 /**
- * renderResult: single component for both delivery modes.
- * - symbols: caption + ANSI payload read back from details (verbatim lines, §3.3)
- * - native / partial / error: the model-visible text note only (host draws
- *   image blocks itself; error rows get host error styling via context.isError)
+ * The row's state background, mirroring pi's own `ToolExecutionComponent`
+ * (pending → `toolPendingBg`, error → `toolErrorBg`, settled → `toolSuccessBg`).
+ */
+function stateBgFn(
+	theme: RenderThemeLike,
+	context: RenderStateLike,
+): (text: string) => string {
+	const color = context.isPartial
+		? "toolPendingBg"
+		: context.isError
+			? "toolErrorBg"
+			: "toolSuccessBg";
+	return (text) => theme.bg(color, text);
+}
+
+/**
+ * A full-width themed blank row — what pi's default shell draws as its
+ * `Box(paddingY=1)` top/bottom padding. `renderShell: "self"` has to reproduce
+ * those rows so the themed header strip keeps the host's shape (#027).
+ */
+function themedBlankLine(bg: (text: string) => string): Component {
+	return {
+		render: (width: number) => [bg(" ".repeat(Math.max(1, width)))],
+		invalidate: () => {},
+	};
+}
+
+/**
+ * renderCall: compact "Show Image <target>" (spec §4.1 registration table).
+ * The tool uses `renderShell: "self"`, so the call paints its own themed header
+ * strip — see `renderShowResult` for why (#027).
+ */
+export function renderShowCall(
+	args: ShowImageParams,
+	theme: RenderThemeLike,
+	context: RenderStateLike,
+): Container {
+	const target = stripControls((args.path ?? args.glob ?? "").trim());
+	const bg = stateBgFn(theme, context);
+	const header = new Container();
+	header.addChild(themedBlankLine(bg));
+	header.addChild(new Text(`Show Image ${target}`, 1, 0, bg));
+	return header;
+}
+
+/**
+ * renderResult: single component for both delivery modes (spec §4.1.3).
+ * - symbols: themed caption strip, then the ANSI payload **outside** the themed
+ *   background. Chafa leaves fully transparent pixels background-less, so inside
+ *   pi's default shell Box they inherit the row color (`toolSuccessBg` dark
+ *   green) until chafa's next reset — a green/terminal-background patchwork in
+ *   the image (#027). Under `renderShell: "self"` the art sits on the terminal
+ *   background, exactly like pi's native image path.
+ * - native / partial / error: the model-visible text note only (the host draws
+ *   image blocks itself); the strip still follows the row state.
  */
 export function renderShowResult(
 	result: AgentToolResult<ShowImageDetails>,
-	isError: boolean,
-): Text {
+	theme: RenderThemeLike,
+	context: RenderStateLike,
+): Container {
 	const summary = textFromContent(result.content);
-	if (isError || !result.details) return new Text(summary, 0, 0);
-	return new Text(displayText(summary, result.details), 0, 0);
+	const bg = stateBgFn(theme, context);
+	const container = new Container();
+	container.addChild(new Text(summary, 1, 0, bg));
+	container.addChild(themedBlankLine(bg));
+	const payload = context.isError ? undefined : result.details?.payload;
+	if (payload) {
+		container.addChild(new Spacer(1));
+		container.addChild(new Text(payload, 1, 0));
+	}
+	return container;
 }
 
 /**
@@ -315,14 +383,10 @@ export function buildShowImageTool(
 		description:
 			"Display one or more image files to the USER in the terminal. Use when the user asks to see/preview a picture, screenshot, plot, icon, or diagram, or when showing an image would help the user understand the task. The image is rendered for the user; symbols delivery returns only a text summary, while a native image block may be attached to a vision-capable model.",
 		parameters: showImageParams,
-		renderShell: "default",
-		renderCall: (args: ShowImageParams) => renderShowCall(args),
-		renderResult: (
-			result: AgentToolResult<ShowImageDetails>,
-			_options,
-			_theme,
-			context,
-		) => renderShowResult(result, context.isError),
+		renderShell: "self",
+		renderCall: (args, theme, context) => renderShowCall(args, theme, context),
+		renderResult: (result, _options, theme, context) =>
+			renderShowResult(result, theme, context),
 		execute: async (
 			_toolCallId: string,
 			params: ShowImageParams,
