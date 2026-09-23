@@ -27,6 +27,9 @@ function escapeRegExpChar(char: string): string {
  * that carries its own trailing "/", so the segment after it needs no extra
  * separator. An empty leading segment (an absolute pattern) contributes the
  * root "/" that expandTargets relies on when matching absolute paths.
+ * POSIX dotfile rule (#029): a wildcard never matches a leading dot — `*`,
+ * `?` and `**` skip `.hidden` — while a segment that starts with a literal dot
+ * still matches it (`.hidden.png`, `.*.png`).
  */
 export function globToRegExp(pattern: string): RegExp {
 	const parts = pattern.replaceAll("\\", "/").split("/");
@@ -46,12 +49,18 @@ export function globToRegExp(pattern: string): RegExp {
 		if (part === "**") {
 			const isFinal = i === parts.length - 1;
 			if (out !== "" && !out.endsWith("/") && !afterGlobStar) out += "/";
-			out += isFinal ? ".*" : "(?:.*/)?";
+			// Every segment the double star consumes must itself be non-hidden.
+			out += isFinal
+				? "(?:(?!\\.)[^/]+/)*(?!\\.)[^/]*"
+				: "(?:(?!\\.)[^/]+/)*";
 			afterGlobStar = !isFinal;
 			continue;
 		}
 		if (out !== "" && !out.endsWith("/") && !afterGlobStar) out += "/";
 		afterGlobStar = false;
+		// POSIX dotfile rule (#029): a leading wildcard does not match a leading
+		// dot; a segment that starts with a literal dot still matches dotfiles.
+		if (part.startsWith("*") || part.startsWith("?")) out += "(?!\\.)";
 		for (const char of part) {
 			if (char === "*") out += "[^/]*";
 			else if (char === "?") out += "[^/]";

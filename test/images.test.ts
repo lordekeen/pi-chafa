@@ -30,6 +30,20 @@ describe("globToRegExp", () => {
 		expect(re.test("a.jpg")).toBe(true);
 		expect(re.test("sub/deep/b.jpg")).toBe(true);
 	});
+	it("never lets wildcards match a leading dot (POSIX, #029)", () => {
+		expect(globToRegExp("*.png").test("a.png")).toBe(true);
+		expect(globToRegExp("*.png").test(".png")).toBe(false);
+		expect(globToRegExp("*.png").test(".hidden.png")).toBe(false);
+		expect(globToRegExp("**/*.png").test("a.png")).toBe(true);
+		expect(globToRegExp("**/*.png").test("sub/a.png")).toBe(true);
+		expect(globToRegExp("**/*.png").test(".a.png")).toBe(false);
+		expect(globToRegExp("**/*.png").test(".hidden/a.png")).toBe(false);
+	});
+	it("matches dotfiles when the segment starts with an explicit dot", () => {
+		expect(globToRegExp(".png").test(".png")).toBe(true);
+		expect(globToRegExp(".*.png").test(".x.png")).toBe(true);
+		expect(globToRegExp(".*.png").test(".png")).toBe(false);
+	});
 });
 
 describe("expandTargets", () => {
@@ -115,6 +129,29 @@ describe("expandTargets — pi path conventions (#028)", () => {
 			"screenshots/a.png",
 		);
 		expect(normalizeTargetPath(abs, "/fake/home")).toBe(abs);
+	});
+});
+
+describe("expandTargets — dotfiles (#029)", () => {
+	it("excludes dotfiles from wildcard expansion", () => {
+		writeFileSync(join(dir, ".hidden.png"), "png-bytes");
+		writeFileSync(join(dir, "visible.png"), "png-bytes");
+		mkdirSync(join(dir, ".hidden-dir"), { recursive: true });
+		writeFileSync(join(dir, ".hidden-dir", "inside.png"), "png-bytes");
+		expect(expandTargets("*.png", dir, dir)).toEqual([join(dir, "visible.png")]);
+		expect(expandTargets("**/*.png", dir, dir)).not.toContain(
+			join(dir, ".hidden.png"),
+		);
+		expect(expandTargets("**/*.png", dir, dir)).not.toContain(
+			join(dir, ".hidden-dir", "inside.png"),
+		);
+	});
+
+	it("still resolves an explicitly named dotfile", () => {
+		writeFileSync(join(dir, ".hidden.png"), "png-bytes");
+		expect(expandTargets(".hidden.png", dir, dir)).toEqual([
+			join(dir, ".hidden.png"),
+		]);
 	});
 });
 
