@@ -57,7 +57,7 @@ tools: read, grep, find, ls, write, ext:pi-chafa/show_image, ext:pi-codegraph
 ## How to target files
 
 - Prefer explicit paths (`show_image path: "docs/plot.png"`) over globs.
-- Paths and globs are relative to the working directory.
+- Paths and globs are relative to the working directory; absolute paths, `~/...`, and pi's `@path` file-reference prefix also work.
 - Use narrow globs when the user says "all screenshots": `screenshots/*.png` — not broad `**` patterns.
 
 ## Overrides

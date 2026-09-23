@@ -2,7 +2,7 @@ import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node
 import { tmpdir } from "node:os";
 import { join, sep } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { expandTargets, globToRegExp, hasMagic, readBytes, sniffMime } from "../src/images.js";
+import { expandTargets, globToRegExp, normalizeTargetPath, readBytes, sniffMime } from "../src/images.js";
 
 let dir: string;
 beforeEach(() => {
@@ -77,6 +77,44 @@ describe("expandTargets", () => {
 		const re = globToRegExp(`${posixDir}/**/*.gif`);
 		expect(re.test(`${posixDir}/top.gif`)).toBe(true);
 		expect(re.test(`${posixDir}/sub/c.gif`)).toBe(true);
+	});
+});
+
+describe("expandTargets — pi path conventions (#028)", () => {
+	it("expands ~ and ~/... against the home directory", () => {
+		expect(normalizeTargetPath("~", "/fake/home")).toBe("/fake/home");
+		expect(normalizeTargetPath("~/Pictures/a.png", "/fake/home")).toBe(
+			join("/fake/home", "Pictures", "a.png"),
+		);
+		expect(expandTargets("~/screenshots/a.png", dir, dir)).toEqual([
+			join(dir, "screenshots", "a.png"),
+		]);
+	});
+
+	it("strips pi's @ file-reference prefix", () => {
+		expect(normalizeTargetPath("@screenshots/a.png", "/fake/home")).toBe(
+			"screenshots/a.png",
+		);
+		expect(expandTargets("@screenshots/a.png", dir, dir)).toEqual([
+			join(dir, "screenshots", "a.png"),
+		]);
+	});
+
+	it("normalizes unicode spaces and file:// URLs", () => {
+		expect(
+			normalizeTargetPath("screenshots\u00A0a.png", "/fake/home"),
+		).toBe("screenshots a.png");
+		expect(
+			normalizeTargetPath(`file://${dir}/screenshots/a.png`, "/fake/home"),
+		).toBe(join(dir, "screenshots", "a.png"));
+	});
+
+	it("leaves absolute and cwd-relative targets untouched", () => {
+		const abs = join(dir, "screenshots", "a.png");
+		expect(normalizeTargetPath("screenshots/a.png", "/fake/home")).toBe(
+			"screenshots/a.png",
+		);
+		expect(normalizeTargetPath(abs, "/fake/home")).toBe(abs);
 	});
 });
 

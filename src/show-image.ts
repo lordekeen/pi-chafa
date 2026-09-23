@@ -43,13 +43,13 @@ export const showImageParams = Type.Object(
 		path: Type.Optional(
 			Type.String({
 				description:
-					"A single image file path, absolute or relative to the working directory.",
+					"A single image file path: absolute, home-relative (~/...), or relative to the working directory.",
 			}),
 		),
 		glob: Type.Optional(
 			Type.String({
 				description:
-					"A glob pattern relative to the working directory, e.g. screenshots/*.png.",
+					"A glob pattern: absolute, home-relative (~/...), or relative to the working directory, e.g. screenshots/*.png.",
 			}),
 		),
 		format: Type.Optional(

@@ -1,6 +1,8 @@
 import { type Dirent, readdirSync, realpathSync, statSync } from "node:fs";
 import { readFile } from "node:fs/promises";
+import { homedir } from "node:os";
 import { isAbsolute, join, resolve, sep } from "node:path";
+import { fileURLToPath } from "node:url";
 
 /** Directories never walked during magic-pattern expansion (documented guard). */
 const PRUNE_DIRS = new Set([".git", "node_modules"]);
@@ -138,16 +140,58 @@ function posix(p: string): string {
 	return p.split(sep).join("/");
 }
 
+const UNICODE_SPACES = /[\u00A0\u2000-\u200A\u202F\u205F\u3000]/g;
+
 /**
- * Resolve `target` (explicit path or glob, absolute or cwd-relative) to the
- * sorted list of existing file paths. Explicit directories throw a dedicated
- * error; zero surviving matches throw a no-files-matched error (spec §8).
+ * Normalize a user-supplied target the way pi's own tools do (`normalizePath`
+ * in pi's `utils/paths.ts`, behind `resolveToCwd` for read/edit/write): unicode
+ * spaces become ASCII, a leading `@` file-reference marker is stripped, `~` and
+ * `~/…` expand to the home directory, and `file://` URLs become paths. A model
+ * that passes what `read`/`edit` accept must not get "no files matched" here
+ * (#028). Pure: `home` is injectable for tests.
  */
-export function expandTargets(target: string, cwd: string): string[] {
+export function normalizeTargetPath(
+	target: string,
+	home: string = homedir(),
+): string {
+	let out = target.replace(UNICODE_SPACES, " ");
+	if (out.startsWith("@")) out = out.slice(1);
+	if (out === "~") return home;
+	if (
+		out.startsWith("~/") ||
+		(process.platform === "win32" && out.startsWith("~\\"))
+	) {
+		return join(home, out.slice(2));
+	}
+	if (/^file:\/\//.test(out)) {
+		try {
+			return fileURLToPath(out);
+		} catch {
+			return out;
+		}
+	}
+	return out;
+}
+
+/**
+ * Resolve `target` (explicit path or glob; absolute, `~/`-relative or
+ * cwd-relative) to the sorted list of existing file paths. Targets are first
+ * normalized through {@link normalizeTargetPath} (#028). Explicit directories
+ * throw a dedicated error; zero surviving matches throw a no-files-matched
+ * error (spec §8).
+ */
+export function expandTargets(
+	target: string,
+	cwd: string,
+	home: string = homedir(),
+): string[] {
 	if (typeof target !== "string" || target.trim() === "") {
 		throw new Error("show_image requires a non-empty path or glob");
 	}
-	const joined = isAbsolute(target) ? target : resolve(cwd, target);
+	const normalized = normalizeTargetPath(target, home);
+	const joined = isAbsolute(normalized)
+		? normalized
+		: resolve(cwd, normalized);
 	const absPattern = posix(joined);
 
 	if (!hasMagic(absPattern)) {
