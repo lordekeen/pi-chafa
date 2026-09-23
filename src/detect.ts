@@ -79,9 +79,16 @@ export function isTmux(env: ImageEnv): boolean {
  * sequences with `allow-passthrough on`, so the ladder keeps
  * `PI_IMAGE_PROTOCOL` as an explicit opt-in there.
  */
-export function knownNoImageSupport(env: ImageEnv, platform: string): boolean {
-	const term = (env.TERM ?? "").toLowerCase();
-	if (term.startsWith("screen")) return true;
+/**
+ * Positive evidence that the *outer* terminal cannot render image protocols,
+ * independent of tmux: a marker or program name that survives into the pane's
+ * environment (tmux inherits the server's environment, so an `ALACRITTY_*`
+ * marker describes the terminal the art would actually land on). `TERM` is
+ * deliberately not consulted here — under tmux it names the pane's emulation
+ * (`screen*`/`tmux*`), not the terminal pi is drawn on; `knownNoImageSupport`
+ * owns the `TERM=screen*` rule.
+ */
+function outerTerminalDenied(env: ImageEnv, platform: string): boolean {
 	if (hasPositiveImageMarker(env)) return false;
 	const termProgram = (env.TERM_PROGRAM ?? "").toLowerCase();
 	const terminalEmulator = (env.TERMINAL_EMULATOR ?? "").toLowerCase();
@@ -106,12 +113,24 @@ export function knownNoImageSupport(env: ImageEnv, platform: string): boolean {
 }
 
 /**
+ * The full #026 negative table. `TERM=screen*` is checked before the positive
+ * markers, exactly as pi-tui does — and that rule is why the tmux branch of the
+ * ladder must not consult this predicate: tmux's upstream default `TERM` is
+ * `screen*`, so applying it inside a pane would deny every default tmux (#031).
+ */
+export function knownNoImageSupport(env: ImageEnv, platform: string): boolean {
+	const term = (env.TERM ?? "").toLowerCase();
+	if (term.startsWith("screen")) return true;
+	return outerTerminalDenied(env, platform);
+}
+
+/**
  * Resolve the effective native-image capability with an instance-independent
  * fallback ladder (spec §7.1 step 3). Priority:
  * 1. **Environment guard (#026):** an environment that positively cannot
  *    render image protocols returns `null` before any declaration is read;
  *    under tmux the ambient declarations are ignored but `PI_IMAGE_PROTOCOL`
- *    remains an explicit opt-in.
+ *    remains an explicit opt-in — marker-based denials still outvote it (#031).
  * 2. pi-tui `getCapabilities().images` when non-null (host truth).
  * 3. pi settings `terminal.images` ("kitty"/"iterm2"; false/"auto"/absent/
  *    unrecognised → no override, which also covers a user disabling images).
@@ -129,6 +148,9 @@ export function resolveCapsImages(
 	env: ImageEnv = {},
 	platform: string = "",
 ): AgentCapsImages {
+	// The empty defaults exist for hermetic tests: with no environment there is
+	// nothing to deny, so the guard is *off*. Production callers must pass the
+	// real env/platform (both defaultDeps and /images do).
 	const fromEnv = asNativeProtocol(
 		typeof envProtocol === "string" ? envProtocol.trim() : envProtocol,
 	);
@@ -137,7 +159,12 @@ export function resolveCapsImages(
 		// explicit per-session env override stays an opt-in; the ambient
 		// declarations (host caps from setCapabilityOverrides and the persistent
 		// terminal.images setting) are what produce blank output and are not
-		// trusted (#026).
+		// trusted (#026). Positive evidence that the outer terminal cannot render
+		// still wins over the opt-in (#031): tmux inherits the server's
+		// environment, so an `ALACRITTY_*`/`WT_SESSION`/VS Code marker describes the
+		// terminal the art would actually land on. The `TERM=screen*` rule is
+		// excluded here on purpose — tmux's own default `TERM` is `screen*`.
+		if (outerTerminalDenied(env, platform)) return null;
 		return fromEnv;
 	}
 	if (knownNoImageSupport(env, platform)) return null;
@@ -279,9 +306,11 @@ export function decideFileDelivery(input: FileDeliveryInput): FileDeliveryPlan {
  * suggested fix can work there (#030): tmux ignores ambient declarations, a
  * known-incapable terminal cannot be fixed by a setting at all, and anything
  * else keeps the generic advice. Every variant keeps the "cannot render native
- * images" phrase the smoke suite asserts. The guard order here is about what
- * can actually work (a terminal that cannot render stays the honest answer even
- * under tmux), not the ladder's trust order in `resolveCapsImages`.
+ * images" phrase the smoke suite asserts. The order mirrors the ladder
+ * exactly, so the hint never contradicts the classification that produced it:
+ * a tmux pane whose outer terminal is positively denied gets the
+ * incapable-terminal answer, while a plain tmux pane (even with the upstream
+ * `TERM=screen*` default) gets the opt-in answer (#031).
  */
 function nativeUnavailableMessage(
 	capsImages: AgentCapsImages,
@@ -291,19 +320,19 @@ function nativeUnavailableMessage(
 	const head =
 		`format=native was requested but this session cannot render native images ` +
 		`(detected protocol: ${capsImages ?? "none"}). `;
-	if (knownNoImageSupport(env, platform)) {
-		return (
-			head +
-			"This terminal is known not to support image protocols — use " +
-			"format=symbols, or run pi in a kitty/iTerm2-capable terminal."
-		);
-	}
-	if (isTmux(env)) {
+	if (isTmux(env) && !outerTerminalDenied(env, platform)) {
 		return (
 			head +
 			"Under tmux, pi's ambient declarations are ignored — export " +
 			"PI_IMAGE_PROTOCOL=kitty before launching pi (with tmux " +
 			"allow-passthrough on) to opt in explicitly, or use format=symbols."
+		);
+	}
+	if (knownNoImageSupport(env, platform)) {
+		return (
+			head +
+			"This terminal is known not to support image protocols — use " +
+			"format=symbols, or run pi in a kitty/iTerm2-capable terminal."
 		);
 	}
 	return (

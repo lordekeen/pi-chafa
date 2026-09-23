@@ -130,6 +130,15 @@ describe("expandTargets — pi path conventions (#028)", () => {
 		);
 		expect(normalizeTargetPath(abs, "/fake/home")).toBe(abs);
 	});
+
+	it("accepts the Windows ~\\ form only when the platform says win32 (#031 seam)", () => {
+		expect(normalizeTargetPath("~\\Pictures\\a.png", "/fake/home", "win32")).toBe(
+			join("/fake/home", "Pictures\\a.png"),
+		);
+		expect(normalizeTargetPath("~\\Pictures\\a.png", "/fake/home", "linux")).toBe(
+			"~\\Pictures\\a.png",
+		);
+	});
 });
 
 describe("expandTargets — dotfiles (#029)", () => {

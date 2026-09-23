@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { cleanSymbolsPayload } from "../src/chafa.js";
 import { DEFAULT_CONFIG } from "../src/config.js";
-import { NATIVE_SAFE_MIMES, resolveCapsImages } from "../src/detect.js";
+import { NATIVE_SAFE_MIMES, type ImageEnv, resolveCapsImages } from "../src/detect.js";
 import {
 	buildShowImageTool,
 	summaryText,
@@ -66,6 +66,9 @@ function makeTool(overrides: {
 	probeChafa?: ShowImageDeps["probeChafa"];
 	runChafa?: ShowImageDeps["runChafa"];
 	sniffMime?: ShowImageDeps["sniffMime"];
+	/** Injected environment/platform for the #026 guard + #030 hint (#031 seam). */
+	env?: ImageEnv;
+	platform?: string;
 } = {}) {
 	const capsImages = overrides.capsImages === undefined ? "kitty" : overrides.capsImages;
 	const hostImages = overrides.hostImages ?? null;
@@ -104,6 +107,10 @@ function makeTool(overrides: {
 		runChafa: overrides.runChafa ?? (async () => overrides.runStdout ?? RAW_ART),
 		// Real cleaner: RAW_ART (cursor toggles wrapped) must become CLEAN_ART.
 		cleanPayload: cleanSymbolsPayload,
+		// Ambient env/platform reach the tool only through the injected seam, so
+		// the forced-native hint is testable without the developer's own terminal.
+		env: () => overrides.env ?? {},
+		platform: () => overrides.platform ?? "linux",
 	});
 	return { tool, ctx: makeCtx(hasUI) };
 }
@@ -499,6 +506,16 @@ describe("show_image execute â€” forced native on non-native caps errors (spec Â
 		await expect(
 			tool.execute("t9", { path: "pic.png", format: "native" }, neverAbort(), noop as never, ctx),
 		).rejects.toThrow(/format=native/);
+	});
+	it("words the hint from the injected environment (default tmux pane, #031 seam)", async () => {
+		const { tool, ctx } = makeTool({
+			capsImages: null,
+			format: "native",
+			env: { TMUX: "/tmp/tmux-1000/default,1,0", TERM: "screen-256color" },
+		});
+		await expect(
+			tool.execute("t10", { path: "pic.png", format: "native" }, neverAbort(), noop as never, ctx),
+		).rejects.toThrow(/export PI_IMAGE_PROTOCOL=kitty/);
 	});
 });
 

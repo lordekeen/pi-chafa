@@ -79,6 +79,30 @@ describe("decideDelivery — spec §7.2 decision table", () => {
 		expect(message).toMatch(/known not to support image protocols/);
 		expect(message).not.toMatch(/terminal\.images/);
 	});
+	it("forced-native error keeps the tmux opt-in hint on a default tmux pane (TERM=screen*, #031)", () => {
+		const message = messageOf({
+			capsImages: null,
+			format: "native",
+			env: { TMUX: "/tmp/tmux-1000/default,1,0", TERM: "screen-256color" },
+			platform: "linux",
+		});
+		expect(message).toMatch(/export PI_IMAGE_PROTOCOL=kitty/);
+		expect(message).not.toMatch(/known not to support/);
+	});
+	it("forced-native error stays honest when tmux sits on a denied outer terminal (#031)", () => {
+		const message = messageOf({
+			capsImages: null,
+			format: "native",
+			env: {
+				TMUX: "/tmp/tmux-1000/default,1,0",
+				TERM: "screen-256color",
+				ALACRITTY_WINDOW_ID: "1",
+			},
+			platform: "linux",
+		});
+		expect(message).toMatch(/known not to support image protocols/);
+		expect(message).not.toMatch(/export PI_IMAGE_PROTOCOL=kitty/);
+	});
 	it("format=native forced on native-capable with showImages=false -> symbols, not an error (spec §7.2 row 3)", () => {
 		expect(
 			decideDelivery(
@@ -128,6 +152,32 @@ describe("resolveCapsImages — capability fallback ladder", () => {
 	});
 	it("step 4: all sources empty -> null", () => {
 		expect(resolveCapsImages(null, null, undefined)).toBe(null);
+	});
+	it("#031: a marker-denied outer terminal outvotes the tmux opt-in", () => {
+		expect(
+			resolveCapsImages(
+				null,
+				true,
+				"kitty",
+				{
+					TMUX: "/tmp/tmux-1000/default,1,0",
+					TERM: "screen-256color",
+					ALACRITTY_WINDOW_ID: "1",
+				},
+				"linux",
+			),
+		).toBe(null);
+	});
+	it("#031: plain tmux (upstream TERM=screen*) keeps the PI_IMAGE_PROTOCOL opt-in", () => {
+		expect(
+			resolveCapsImages(
+				null,
+				true,
+				"kitty",
+				{ TMUX: "/tmp/tmux-1000/default,1,0", TERM: "screen-256color" },
+				"linux",
+			),
+		).toBe("kitty");
 	});
 });
 

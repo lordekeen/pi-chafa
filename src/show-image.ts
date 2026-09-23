@@ -21,6 +21,7 @@ import { readHostImageSettings, resolveConfig } from "./config.js";
 import {
 	decideDelivery,
 	decideFileDelivery,
+	type ImageEnv,
 	NATIVE_SAFE_MIMES,
 	resolveCapsImages,
 } from "./detect.js";
@@ -106,6 +107,9 @@ export interface ShowImageDeps {
 	cleanPayload: (raw: string) => string;
 	/** Live viewport width in columns, when known (#011). */
 	terminalColumns: () => number | undefined;
+	/** Real environment + platform the #026 guard and the #030 hint read. */
+	env: () => ImageEnv;
+	platform: () => string;
 }
 
 function defaultDeps(): ShowImageDeps {
@@ -113,6 +117,8 @@ function defaultDeps(): ShowImageDeps {
 	// in a session never respawn `chafa --version`, while a failed probe is
 	// retried so a missing-then-installed chafa recovers.
 	const cachedProbe = createCachedProbe();
+	const readEnv = () => process.env;
+	const readPlatform = () => process.platform;
 	return {
 		resolveConfig,
 		readHostImages: readHostImageSettings,
@@ -125,10 +131,12 @@ function defaultDeps(): ShowImageDeps {
 			resolveCapsImages(
 				getCapabilities().images,
 				readHostImageSettings().images,
-				process.env.PI_IMAGE_PROTOCOL,
-				process.env,
-				process.platform,
+				readEnv().PI_IMAGE_PROTOCOL,
+				readEnv(),
+				readPlatform(),
 			),
+		env: readEnv,
+		platform: readPlatform,
 		expandTargets,
 		readBytes,
 		sniffMime,
@@ -474,8 +482,8 @@ export function buildShowImageTool(
 				showImages: d.readHostImages().showImages,
 				preferNative: resolved.preferNative,
 				format: overrides.format ?? "auto",
-				env: process.env,
-				platform: process.platform,
+				env: d.env(),
+				platform: d.platform(),
 			});
 			// Forced format=native on a capable host with images off degrades to
 			// symbols (decideDelivery); record that so the note is not silent.

@@ -162,14 +162,12 @@ const UNICODE_SPACES = /[\u00A0\u2000-\u200A\u202F\u205F\u3000]/g;
 export function normalizeTargetPath(
 	target: string,
 	home: string = homedir(),
+	platform: string = process.platform,
 ): string {
 	let out = target.replace(UNICODE_SPACES, " ");
 	if (out.startsWith("@")) out = out.slice(1);
 	if (out === "~") return home;
-	if (
-		out.startsWith("~/") ||
-		(process.platform === "win32" && out.startsWith("~\\"))
-	) {
+	if (out.startsWith("~/") || (platform === "win32" && out.startsWith("~\\"))) {
 		return join(home, out.slice(2));
 	}
 	if (/^file:\/\//.test(out)) {

@@ -23,7 +23,7 @@ import {
 	readHostImageSettings,
 	writeConfigFile,
 } from "../config.js";
-import { isTmux, resolveCapsImages } from "../detect.js";
+import { isTmux, type ImageEnv, resolveCapsImages } from "../detect.js";
 import { stripControls } from "../show-image.js";
 import {
 	type AgentCapsImages,
@@ -110,7 +110,7 @@ export function resolveRuntimeCaps(
 	hostCaps: AgentCapsImages,
 	hostImages: AgentCapsImages,
 	envProtocol: string | undefined,
-	env: Record<string, string | undefined> = {},
+	env: ImageEnv = {},
 	platform: string = "",
 ): RuntimeCaps {
 	const capsImages = resolveCapsImages(
