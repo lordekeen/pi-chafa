@@ -467,12 +467,15 @@ export function buildShowImageTool(
 			};
 
 			// Step 3 — capability decision (spec §5.1, §7.2). decideDelivery
-			// throws for a forced format=native this session cannot render.
+			// throws for a forced format=native this session cannot render; the
+			// real env/platform word that error's fix hint for tmux (#030).
 			const mode: DeliveryMode = decideDelivery({
 				capsImages: d.capsImages(),
 				showImages: d.readHostImages().showImages,
 				preferNative: resolved.preferNative,
 				format: overrides.format ?? "auto",
+				env: process.env,
+				platform: process.platform,
 			});
 			// Forced format=native on a capable host with images off degrades to
 			// symbols (decideDelivery); record that so the note is not silent.

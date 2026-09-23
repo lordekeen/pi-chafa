@@ -23,6 +23,16 @@ function input(partial: Partial<DeliveryInput>): DeliveryInput {
 	};
 }
 
+/** The thrown message of a forced decision, or "" when it did not throw. */
+function messageOf(partial: Partial<DeliveryInput>): string {
+	try {
+		decideDelivery(input(partial));
+		return "";
+	} catch (error) {
+		return error instanceof Error ? error.message : String(error);
+	}
+}
+
 describe("decideDelivery — spec §7.2 decision table", () => {
 	it("kitty + showImages + preferNative default -> native", () => {
 		expect(decideDelivery(input({ capsImages: "kitty" }))).toBe("native");
@@ -46,6 +56,28 @@ describe("decideDelivery — spec §7.2 decision table", () => {
 	it("format=native forced on null caps -> informative error, not silent degrade", () => {
 		expect(() => decideDelivery(input({ capsImages: null, format: "native" }))).toThrow(/format=native/);
 		expect(() => decideDelivery(input({ capsImages: null, format: "native" }))).toThrow(/PI_IMAGE_PROTOCOL/);
+	});
+	it("forced-native error is worded for tmux: PI_IMAGE_PROTOCOL opt-in, not the ignored setting (#030)", () => {
+		const message = messageOf({
+			capsImages: null,
+			format: "native",
+			env: { TMUX: "/tmp/tmux-1000/default,12936,0", TERM: "tmux-256color" },
+			platform: "linux",
+		});
+		expect(message).toMatch(/cannot render native images/);
+		expect(message).toMatch(/Under tmux/);
+		expect(message).toMatch(/export PI_IMAGE_PROTOCOL=kitty/);
+		expect(message).not.toMatch(/terminal\.images/);
+	});
+	it("forced-native error names an incapable terminal instead of suggesting a setting (#030)", () => {
+		const message = messageOf({
+			capsImages: null,
+			format: "native",
+			env: { TERM_PROGRAM: "vscode" },
+			platform: "linux",
+		});
+		expect(message).toMatch(/known not to support image protocols/);
+		expect(message).not.toMatch(/terminal\.images/);
 	});
 	it("format=native forced on native-capable with showImages=false -> symbols, not an error (spec §7.2 row 3)", () => {
 		expect(

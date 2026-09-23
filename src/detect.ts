@@ -8,6 +8,12 @@ export interface DeliveryInput {
 	preferNative: boolean;
 	/** Per-call format override ("auto" when absent). */
 	format: DeliveryFormat;
+	/**
+	 * Environment + platform only sharpen the forced-native error hint (#030);
+	 * the decision itself comes from the already-resolved capabilities.
+	 */
+	env?: ImageEnv;
+	platform?: string;
 }
 
 /**
@@ -269,6 +275,44 @@ export function decideFileDelivery(input: FileDeliveryInput): FileDeliveryPlan {
 }
 
 /**
+ * The forced-`format=native` refusal, worded for the actual environment so the
+ * suggested fix can work there (#030): tmux ignores ambient declarations, a
+ * known-incapable terminal cannot be fixed by a setting at all, and anything
+ * else keeps the generic advice. Every variant keeps the "cannot render native
+ * images" phrase the smoke suite asserts. The guard order here is about what
+ * can actually work (a terminal that cannot render stays the honest answer even
+ * under tmux), not the ladder's trust order in `resolveCapsImages`.
+ */
+function nativeUnavailableMessage(
+	capsImages: AgentCapsImages,
+	env: ImageEnv = {},
+	platform: string = "",
+): string {
+	const head =
+		`format=native was requested but this session cannot render native images ` +
+		`(detected protocol: ${capsImages ?? "none"}). `;
+	if (knownNoImageSupport(env, platform)) {
+		return (
+			head +
+			"This terminal is known not to support image protocols — use " +
+			"format=symbols, or run pi in a kitty/iTerm2-capable terminal."
+		);
+	}
+	if (isTmux(env)) {
+		return (
+			head +
+			"Under tmux, pi's ambient declarations are ignored — export " +
+			"PI_IMAGE_PROTOCOL=kitty before launching pi (with tmux " +
+			"allow-passthrough on) to opt in explicitly, or use format=symbols."
+		);
+	}
+	return (
+		head +
+		"Use format=symbols, or set PI_IMAGE_PROTOCOL or pi's terminal.images setting."
+	);
+}
+
+/**
  * Decide native vs symbols delivery (spec §5.1, §7.2 decision table).
  * Pure: capabilities + host flag + config + per-call override in, DeliveryMode out.
  * A forced format=native errors only when the session is not native-capable;
@@ -282,9 +326,7 @@ export function decideDelivery(input: DeliveryInput): DeliveryMode {
 	if (format === "native") {
 		if (!nativeCapable) {
 			throw new Error(
-				`format=native was requested but this session cannot render native images ` +
-					`(detected protocol: ${capsImages ?? "none"}). ` +
-					`Use format=symbols, or fix terminal detection (PI_IMAGE_PROTOCOL / terminal.images).`,
+				nativeUnavailableMessage(capsImages, input.env, input.platform),
 			);
 		}
 		// Capable terminal, but the host has images off: fall through to symbols
