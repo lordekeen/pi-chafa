@@ -124,6 +124,7 @@ pi's image capability is resolved (read-only) through an explicit ladder, in pri
 - No sixel — see the upstream pi TUI sixel proposal (docs/spec/2026-09-03-pi-tui-sixel-support-proposal.md) for the protocol roadmap.
 - Not a `read` override; pi-pretty's `read` may be preferable on native terminals (see the bundled skill).
 - On native terminals (kitty/iTerm2), a file that is not a recognized image format is a per-file error (`format="symbols"` may still render it via Chafa) — no image block is emitted, since a host-unrenderable block would be persisted in session history and rejected by providers on every later turn.
+- Native rendering depends on the terminal's own image-protocol implementation: a terminal that only *partially* implements kitty graphics can leave blank space where an image was placed — observed with Konsole 26.08 when `terminal.images` declares `"kitty"`, reproducible with pi's built-in `read`, i.e. terminal-side. Prefer `format: "symbols"` there (#032).
 
 ## Troubleshooting
 
@@ -132,6 +133,7 @@ pi's image capability is resolved (read-only) through an explicit ladder, in pri
 - **Kitty shows a caption but no image for a JPEG/GIF/WebP** → host PNG conversion limitation; pass `format: "symbols"`.
 - **Terminal supports Kitty graphics (e.g. Konsole) but renders ANSI symbols** → pi's auto-detection only recognizes `kitty`, `ghostty`, `wezterm`, and `warp`. Override via `export PI_IMAGE_PROTOCOL=kitty` or set `"terminal": { "images": "kitty" }` in `~/.pi/agent/settings.json`.
 - **A declared `terminal.images` is ignored** → pi-chafa refuses declarations in terminals known to be unable to render image protocols (Alacritty, VS Code, Zed, JetBrains, Windows Terminal, GNU screen, `win32`). Under tmux only `PI_IMAGE_PROTOCOL` can force native (via kitty passthrough); `terminal.images` is deliberately ignored there because a stale declaration is what produced blank output. See #026.
+- **Native images render blank on Konsole** (with `"terminal": { "images": "kitty" }` declared) → Konsole only partially implements the kitty protocol; the same blank output occurs with pi's own `read` tool, so it is terminal-side. Pass `format: "symbols"`, or remove the declaration and let pi-chafa resolve symbols by default. Not a pi-chafa defect — see #032 and [`docs/spec/2026-09-22-native-rendering-validation.md`](docs/spec/2026-09-22-native-rendering-validation.md).
 
 ## License
 
