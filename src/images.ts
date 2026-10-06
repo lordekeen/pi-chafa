@@ -1,5 +1,5 @@
 import { type Dirent, readdirSync, realpathSync, statSync } from "node:fs";
-import { readFile } from "node:fs/promises";
+import { open, readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { isAbsolute, join, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -15,6 +15,37 @@ const PRUNE_DIRS = new Set([".git", "node_modules"]);
  * matching more files than this is a model mistake, not a bulk-render request.
  */
 export const MAX_GLOB_MATCHES = 50;
+
+/**
+ * Native-delivery byte ceiling (spec §8, #037): beyond this, a file is refused
+ * on the native route with a per-file actionable note instead of being fully
+ * buffered and base64-retained (1.33×) in session history.
+ */
+export const MAX_NATIVE_BYTES = 32 * 1024 * 1024;
+
+/**
+ * Read only the mime-sniff window (first `size` bytes; #037). The symbols path
+ * never needs the file content — chafa re-reads the file itself — so a full
+ * read is a pure I/O+memory cost (~20× measured).
+ */
+export async function readSniffHead(
+	filePath: string,
+	size = 512,
+): Promise<Buffer> {
+	const handle = await open(filePath, "r");
+	try {
+		const buf = Buffer.alloc(size);
+		const { bytesRead } = await handle.read(buf, 0, size, 0);
+		return buf.subarray(0, bytesRead);
+	} finally {
+		await handle.close();
+	}
+}
+
+/** stat-derived size in bytes; reads no content (#037). Special files may differ from a read's byteLength — negligible. */
+export function statFileSize(filePath: string): number {
+	return statSync(filePath).size;
+}
 
 const MAGIC_RE = /[*?]/;
 
@@ -232,7 +263,9 @@ export function expandTargets(
 
 	const regex = globToRegExp(absPattern);
 	const root = searchRoot(absPattern);
-	const matches = walkFiles(root, signal).filter((file) => regex.test(posix(file)));
+	const matches = walkFiles(root, signal).filter((file) =>
+		regex.test(posix(file)),
+	);
 	// Output cap (spec §13, #035): rendering hundreds of matches is never the
 	// intent; reject before the per-file loop so a model-supplied wildcard over a
 	// large tree fails fast (<1 s) with an actionable message. Target-free by

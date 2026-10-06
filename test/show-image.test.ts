@@ -85,6 +85,9 @@ function makeTool(overrides: {
 	probeChafa?: ShowImageDeps["probeChafa"];
 	runChafa?: ShowImageDeps["runChafa"];
 	sniffMime?: ShowImageDeps["sniffMime"];
+	readBytes?: ShowImageDeps["readBytes"];
+	readHead?: ShowImageDeps["readHead"];
+	fileSize?: ShowImageDeps["fileSize"];
 	expandTargets?: ShowImageDeps["expandTargets"];
 	/** Injected environment/platform for the #026 guard + #030 hint (#031 seam). */
 	env?: ImageEnv;
@@ -123,10 +126,18 @@ function makeTool(overrides: {
 				if (abs === pngPath) return [abs];
 				return [];
 			}),
-		readBytes: async (path) => {
-			if (path !== pngPath) throw new Error(`failed to read ${path}: ENOENT`);
-			return Buffer.from(PNG_BASE64, "base64");
-		},
+		readBytes:
+			overrides.readBytes ??
+			(async (path) => {
+				if (path !== pngPath) throw new Error(`failed to read ${path}: ENOENT`);
+				return Buffer.from(PNG_BASE64, "base64");
+			}),
+		readHead:
+			overrides.readHead ??
+			(async () => Buffer.from(PNG_BASE64, "base64")),
+		fileSize:
+			overrides.fileSize ??
+			(() => Buffer.from(PNG_BASE64, "base64").byteLength),
 		sniffMime: overrides.sniffMime ?? (() => "image/png"),
 		// Hermetic viewport: never read the developer's real TTY in tests (#011).
 		terminalColumns: () => overrides.columns,
@@ -596,6 +607,48 @@ describe("show_image execute — capability fallback ladder (headline fix)", () 
 	});
 });
 
+describe("show_image execute — bounded reads (#037)", () => {
+it("never full-reads on the symbols path; byteSize comes from stat", async () => {
+const { tool, ctx } = makeTool({
+capsImages: null,
+runStdout: RAW_ART,
+// A full read on the symbols path is the defect this test pins.
+readBytes: () => {
+throw new Error("full read must not happen on the symbols path");
+},
+fileSize: () => 12345,
+});
+const result = await tool.execute(
+"t-bounded-1",
+{ path: "pic.png" },
+neverAbort(),
+noop as never,
+ctx,
+);
+const details = result.details as ShowImageDetails;
+expect(details.mode).toBe("symbols");
+expect(details.files[0]?.byteSize).toBe(12345);
+});
+
+it("refuses native delivery above the ceiling without a full read", async () => {
+const { tool, ctx } = makeTool({
+capsImages: "kitty",
+fileSize: () => 32 * 1024 * 1024 + 1,
+readBytes: () => {
+throw new Error("full read must not happen above the ceiling");
+},
+});
+await expect(
+tool.execute(
+"t-bounded-2",
+{ path: "pic.png" },
+neverAbort(),
+noop as never,
+ctx,
+),
+).rejects.toThrow(/native-delivery ceiling/);
+});
+});
 describe("show_image execute — bounded parallel rendering (#036)", () => {
 interface ChafaHandle {
 resolve: (value: string) => void;
@@ -618,6 +671,8 @@ images: null,
 getCapsImages: () => null,
 expandTargets: () => filePaths,
 readBytes: async () => Buffer.from(PNG_BASE64, "base64"),
+readHead: async () => Buffer.from(PNG_BASE64, "base64"),
+fileSize: () => Buffer.from(PNG_BASE64, "base64").byteLength,
 sniffMime: () => "image/png",
 probeChafa: async () => ({
 binary: "/usr/bin/chafa",
@@ -862,6 +917,8 @@ describe("show_image execute — multi-image symbols output (#005)", () => {
 			getCapsImages: () => null,
 			expandTargets: () => paths,
 			readBytes: async () => Buffer.from(PNG_BASE64, "base64"),
+			readHead: async () => Buffer.from(PNG_BASE64, "base64"),
+			fileSize: () => Buffer.from(PNG_BASE64, "base64").byteLength,
 			sniffMime: () => "image/png",
 			probeChafa: async () => ({
 				binary: "/usr/bin/chafa",

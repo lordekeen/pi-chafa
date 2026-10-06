@@ -26,7 +26,14 @@ import {
 	NATIVE_SAFE_MIMES,
 	resolveCapsImages,
 } from "./detect.js";
-import { expandTargets, readBytes, sniffMime } from "./images.js";
+import {
+	expandTargets,
+	MAX_NATIVE_BYTES,
+	readBytes,
+	readSniffHead,
+	sniffMime,
+	statFileSize,
+} from "./images.js";
 import { stripControls } from "./sanitize.js";
 import type {
 	AgentCapsImages,
@@ -112,6 +119,10 @@ export interface ShowImageDeps {
 		cwd: string,
 		signal?: AbortSignal,
 	) => string[];
+	/** First ≤512 bytes for mime sniffing; the symbols path never full-reads (#037). */
+	readHead: (filePath: string, size?: number) => Promise<Buffer>;
+	/** File size in bytes; the native path checks it against the ceiling first (#037). */
+	fileSize: (filePath: string) => number;
 	readBytes: (filePath: string) => Promise<Buffer>;
 	sniffMime: (bytes: Buffer) => string;
 	probeChafa: (
@@ -152,6 +163,8 @@ function defaultDeps(): ShowImageDeps {
 		// exposes (target, cwd, signal?) — execute never overrides the home dir.
 		expandTargets: (target, cwd, signal) =>
 			expandTargets(target, cwd, undefined, signal),
+		readHead: readSniffHead,
+		fileSize: statFileSize,
 		readBytes,
 		sniffMime,
 		probeChafa: (binaryPath, signal) => cachedProbe(binaryPath, signal),
@@ -569,11 +582,13 @@ export function buildShowImageTool(
 					});
 				}
 				try {
-					// Read + sniff up front for both paths: the delivery decision needs the
-					// mime before it can choose native vs symbols (#014/#015). Reads stay
-					// serial (bounded by the #035 cap); only chafa overlaps.
-					const bytes = await d.readBytes(filePath);
-					const mimeType = d.sniffMime(bytes);
+					// Sniff head + stat for both paths (#037): the delivery decision needs
+					// the mime before choosing native vs symbols (#014/#015), and the full
+					// read is only ever taken on the native route, gated by the ceiling.
+					// Reads stay serial (bounded by the #035 cap); only chafa overlaps.
+					const head = await d.readHead(filePath);
+					const mimeType = d.sniffMime(head);
+					const fileSize = d.fileSize(filePath);
 					const format = overrides.format ?? "auto";
 					// Probe only when chafa is actually needed: a symbols session always
 					// needs it, a native session needs it only for a mime that cannot go
@@ -594,6 +609,15 @@ export function buildShowImageTool(
 						throw new Error(plan.error ?? "this file cannot be delivered");
 					}
 					if (plan.delivery === "native") {
+						// Ceiling check BEFORE the full read: an oversized file fails
+						// per-file with an actionable note instead of being buffered and
+						// base64-retained (1.33×) in session history (#037, spec §8).
+						if (fileSize > MAX_NATIVE_BYTES) {
+							throw new Error(
+								`image exceeds ${MAX_NATIVE_BYTES} bytes (native-delivery ceiling); pass format=symbols or use a smaller file`,
+							);
+						}
+						const bytes = await d.readBytes(filePath);
 						slots[index] = {
 							path: filePath,
 							ok: true,
@@ -627,7 +651,7 @@ export function buildShowImageTool(
 						chafaJobs.push({
 							index,
 							mimeType,
-							byteSize: bytes.byteLength,
+							byteSize: fileSize,
 							planNote: plan.note,
 							job,
 						});
