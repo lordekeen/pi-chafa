@@ -1169,6 +1169,46 @@ describe("runImagesCommand", () => {
 		await run;
 	});
 
+	it("the Done row saves and closes when dirty, like Ctrl+S (#047)", async () => {
+		const realWrite = writeConfigFile;
+		const writeSpy = vi.fn((dir: string, cfg: unknown) => realWrite(dir, cfg as ChafaConfig));
+		let panel: { handleInput: (d: string) => void } | undefined;
+		const { run, notifyMock } = await mountPanel({
+			deps: { writeConfigFile: writeSpy },
+			simulate: (c, mount) => {
+				if (mount === 1) {
+					panel = c;
+					c.handleInput("\r"); // dirty: Prefer native → false
+					for (let i = 0; i < 9; i++) c.handleInput("\x1b[B");
+					c.handleInput("\r"); // Enter on the Done row
+				}
+			},
+		});
+		await run;
+		expect(writeSpy).toHaveBeenCalledTimes(1);
+		expect(loadConfig(testDir).preferNative).toBe(false);
+		expect(notifyMock).toHaveBeenCalledWith(
+			`pi-chafa: 1 setting saved to ${testDir}/pi-chafa.json`,
+			"info",
+		);
+		expect(panel).toBeDefined();
+	});
+
+	it("the Done row closes without writing when clean (#047)", async () => {
+		const realWrite = writeConfigFile;
+		const writeSpy = vi.fn((dir: string, cfg: unknown) => realWrite(dir, cfg as ChafaConfig));
+		const { run, notifyMock } = await mountPanel({
+			deps: { writeConfigFile: writeSpy },
+			simulate: (c) => {
+				for (let i = 0; i < 9; i++) c.handleInput("\x1b[B");
+				c.handleInput("\r");
+			},
+		});
+		await run;
+		expect(writeSpy).not.toHaveBeenCalled();
+		expect(notifyMock).toHaveBeenCalledWith("pi-chafa: settings unchanged", "info");
+	});
+
 	it("a failed write warns, keeps the draft, and leaves the panel open (#045)", async () => {
 		chmodSync(testDir, 0o555);
 		const { run, notifyMock, mounted } = await mountPanel({

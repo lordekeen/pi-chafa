@@ -73,7 +73,7 @@ export const SETTING_DESCRIPTIONS = {
 		"Chafa binary executable. Enter/Space toggles auto/path · Press 'e' to edit custom path.",
 	runtimeStatus:
 		"Inspect detected image protocols, host showImages setting, and chafa version.",
-	done: "Save changes and return to conversation.",
+	done: "Save and close (Ctrl+S)", // #047: the row is the second confirm, same as the chord
 } as const;
 
 /** Which source supplied the effective image capability (spec §6.4 ladder). */
@@ -647,9 +647,11 @@ export async function runImagesCommand(
 							currentItem
 						) {
 							// Pseudo-rows (values-less actions) belong to the wrapper;
-							// value rows fall through so the list cycles them.
+							// value rows fall through so the list cycles them. The Done
+							// row is the second confirm — identical to Ctrl+S (#047) —
+							// so the two cannot drift.
 							if (currentItem.id === "done") {
-								done({ action: "done" });
+								saveAndClose();
 								return;
 							}
 							if (currentItem.id === "runtimeStatus") {
