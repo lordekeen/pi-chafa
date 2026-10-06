@@ -596,6 +596,158 @@ describe("show_image execute — capability fallback ladder (headline fix)", () 
 	});
 });
 
+describe("show_image execute — bounded parallel rendering (#036)", () => {
+interface ChafaHandle {
+resolve: (value: string) => void;
+reject: (error: unknown) => void;
+}
+function makePooledTool(
+filePaths: string[],
+getSignal?: () => AbortSignal | undefined,
+) {
+let current = 0;
+let maxInFlight = 0;
+const pending: ChafaHandle[] = [];
+const tool = buildShowImageTool({
+resolveConfig: (perCall) => resolvedConfig(perCall),
+readHostImages: () => ({
+showImages: true,
+imageWidthCells: 60,
+images: null,
+}),
+getCapsImages: () => null,
+expandTargets: () => filePaths,
+readBytes: async () => Buffer.from(PNG_BASE64, "base64"),
+sniffMime: () => "image/png",
+probeChafa: async () => ({
+binary: "/usr/bin/chafa",
+version: { major: 1, minor: 18 },
+loaders: null,
+}),
+runChafa: () => {
+current += 1;
+maxInFlight = Math.max(maxInFlight, current);
+return new Promise<string>((resolve, reject) => {
+// Mirror the real subprocess: a shared abort rejects every job.
+const onAbort = () => {
+const err = new Error("aborted") as Error & { code?: string };
+err.name = "AbortError";
+reject(err);
+};
+const signal = getSignal?.();
+if (signal?.aborted) {
+onAbort();
+return;
+}
+signal?.addEventListener("abort", onAbort, { once: true });
+pending.push({
+resolve: (value: string) => {
+signal?.removeEventListener("abort", onAbort);
+current -= 1;
+resolve(value);
+},
+reject: (error: unknown) => {
+signal?.removeEventListener("abort", onAbort);
+current -= 1;
+reject(error);
+},
+});
+});
+},
+cleanPayload: cleanSymbolsPayload,
+env: () => ({}),
+platform: () => "linux",
+terminalColumns: () => 80,
+});
+return {
+tool,
+ctx: makeCtx(true),
+pending,
+maxInFlight: () => maxInFlight,
+};
+}
+
+it("runs at most 4 chafa renders concurrently and assembles results in order", async () => {
+const paths = Array.from({ length: 5 }, (_, i) => join(dir, `f${i}.png`));
+const { tool, ctx, pending, maxInFlight } = makePooledTool(paths);
+const run = tool.execute(
+"p1",
+{ glob: "f*.png" },
+neverAbort(),
+noop as never,
+ctx,
+);
+await vi.waitFor(() => {
+expect(pending.length).toBe(4);
+});
+expect(maxInFlight()).toBe(4);
+// Resolve the first four; the fifth must then start (gate frees a slot).
+for (let i = 0; i < 4; i++) pending[i]!.resolve(RAW_ART);
+await vi.waitFor(() => {
+expect(pending.length).toBe(5);
+});
+pending[4]!.resolve(RAW_ART);
+const result = await run;
+const details = result.details as ShowImageDetails;
+expect(details.files.map((f) => f.path)).toEqual(paths);
+expect(details.files.every((f) => f.ok)).toBe(true);
+// Labeled blocks keep match order (byte-identical to serial assembly).
+const label = (p: string) => `[${p.split("/").pop()}]\n${CLEAN_ART}`;
+expect(details.payload).toBe(paths.map(label).join("\n\n"));
+});
+
+it("keeps per-file failures and notes identical under the pool", async () => {
+const paths = Array.from({ length: 5 }, (_, i) => join(dir, `g${i}.png`));
+const { tool, ctx, pending } = makePooledTool(paths);
+const run = tool.execute(
+"p2",
+{ glob: "g*.png" },
+neverAbort(),
+noop as never,
+ctx,
+);
+await vi.waitFor(() => {
+expect(pending.length).toBe(4);
+});
+pending[0]!.resolve(RAW_ART);
+pending[1]!.reject(new Error("chafa exited with an error: boom"));
+pending[2]!.resolve(RAW_ART);
+pending[3]!.resolve(RAW_ART);
+await vi.waitFor(() => {
+expect(pending.length).toBe(5);
+});
+pending[4]!.resolve(RAW_ART);
+const result = await run;
+const details = result.details as ShowImageDetails;
+expect(details.files.map((f) => f.path)).toEqual(paths);
+expect(details.files[1]).toMatchObject({
+ok: false,
+note: "chafa exited with an error: boom",
+});
+expect(details.files.filter((f) => f.ok)).toHaveLength(4);
+});
+
+it("rethrows an abort promptly through the pool", async () => {
+const paths = Array.from({ length: 3 }, (_, i) => join(dir, `h${i}.png`));
+const controller = new AbortController();
+const { tool, ctx, pending } = makePooledTool(
+paths,
+() => controller.signal,
+);
+const run = tool.execute(
+"p3",
+{ glob: "h*.png" },
+controller.signal,
+noop as never,
+ctx,
+);
+await vi.waitFor(() => {
+expect(pending.length).toBe(3);
+});
+controller.abort();
+await expect(run).rejects.toMatchObject({ name: "AbortError" });
+});
+});
 describe("show_image execute — abort-aware expansion (#035)", () => {
 it("passes its abort signal into expandTargets", async () => {
 const seen: (AbortSignal | undefined)[] = [];

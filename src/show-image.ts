@@ -11,6 +11,7 @@ import {
 	Text,
 } from "@earendil-works/pi-tui";
 import { type Static, Type } from "typebox";
+import { abortError } from "./abort.js";
 import {
 	buildSymbolsArgs,
 	cleanSymbolsPayload,
@@ -25,7 +26,6 @@ import {
 	NATIVE_SAFE_MIMES,
 	resolveCapsImages,
 } from "./detect.js";
-import { abortError } from "./abort.js";
 import { expandTargets, readBytes, sniffMime } from "./images.js";
 import { stripControls } from "./sanitize.js";
 import type {
@@ -88,6 +88,13 @@ export const showImageParams = Type.Object(
 );
 
 export type ShowImageParams = Static<typeof showImageParams>;
+
+/**
+ * Bound on concurrently running chafa subprocesses for a multi-file run
+ * (spec §7.1/§7.3, #036). Renders are single-core-bound, so files can overlap;
+ * results are assembled in match order regardless of completion order.
+ */
+export const MAX_CONCURRENT_RENDERS = 4;
 
 /** Injectable seams so execute() is testable without a terminal, chafa, or config file (spec §5.3). */
 export interface ShowImageDeps {
@@ -505,15 +512,45 @@ export function buildShowImageTool(
 
 			// Steps 4–5 — per-file delivery: read + sniff once, decide the route
 			// (native block vs chafa symbols vs per-file error), then deliver.
-			// Failures are per-file, never batch-fatal.
-			const files: ShowImageFile[] = [];
-			const imageBlocks: Array<{ data: string; mimeType: string }> = [];
-			// Per-file payloads are collected as { path, payload } pairs so a label can
-			// never drift out of alignment with its art (#005); the previous parallel
-			// arrays plus a filtered join could mis-pair blocks with names.
-			const payloads: Array<{ path: string; payload: string }> = [];
+			// Failures are per-file, never batch-fatal. Chafa subprocesses run
+			// through a bounded pool (#036): at most MAX_CONCURRENT_RENDERS in
+			// flight, results land in index-keyed slots so assembly stays in
+			// match order (byte-identical to the serial baseline). Per-file
+			// metadata needed after the chafa await (mime, size, degrade note) is
+			// stashed in the job record — the read buffer itself is not retained.
+			const slots: Array<ShowImageFile | undefined> = new Array(matched.length);
+			const nativeBlocks = new Map<
+				number,
+				{ data: string; mimeType: string }
+			>();
+			const payloadByIndex = new Map<number, string>();
+			interface ChafaJob {
+				index: number;
+				mimeType: string;
+				byteSize: number;
+				planNote?: string;
+				job: Promise<string>;
+			}
+			const chafaJobs: ChafaJob[] = [];
+			// Simple bounded-pool gate: at most one waiter can exist because pass 1
+			// awaits the gate per file, sequentially.
+			let activeChafa = 0;
+			let wake: (() => void) | null = null;
+			const poolGate = async (): Promise<void> => {
+				if (activeChafa >= MAX_CONCURRENT_RENDERS) {
+					await new Promise<void>((resolve) => {
+						wake = resolve;
+					});
+				}
+			};
+			const releasePool = (): void => {
+				activeChafa -= 1;
+				const w = wake;
+				wake = null;
+				w?.();
+			};
 			let progress = 0;
-			for (const filePath of matched) {
+			for (const [index, filePath] of matched.entries()) {
 				progress += 1;
 				if (signal?.aborted) throw abortError(signal);
 				if (matched.length > 1 && onUpdate) {
@@ -533,7 +570,8 @@ export function buildShowImageTool(
 				}
 				try {
 					// Read + sniff up front for both paths: the delivery decision needs the
-					// mime before it can choose native vs symbols (#014/#015).
+					// mime before it can choose native vs symbols (#014/#015). Reads stay
+					// serial (bounded by the #035 cap); only chafa overlaps.
 					const bytes = await d.readBytes(filePath);
 					const mimeType = d.sniffMime(bytes);
 					const format = overrides.format ?? "auto";
@@ -556,46 +594,43 @@ export function buildShowImageTool(
 						throw new Error(plan.error ?? "this file cannot be delivered");
 					}
 					if (plan.delivery === "native") {
-						files.push({
+						slots[index] = {
 							path: filePath,
 							ok: true,
 							mode: "native",
 							mimeType,
 							byteSize: bytes.byteLength,
+						};
+						nativeBlocks.set(index, {
+							data: bytes.toString("base64"),
+							mimeType,
 						});
-						imageBlocks.push({ data: bytes.toString("base64"), mimeType });
 					} else {
 						// Step 4b — symbols delivery (spec §7.1, §7.3): chat-safe
-						// args, bounded exec, cleaned payload.
-						const stdout = await d.runChafa(
-							chafaBinary,
-							buildSymbolsArgs(filePath, symbolsSettings),
-							{ timeoutMs: resolved.symbols.timeoutMs, signal },
+						// args, bounded exec, cleaned payload. The subprocess runs
+						// through the pool; per-file outcomes settle in pass 2.
+						await poolGate();
+						activeChafa += 1;
+						const job = d
+							.runChafa(
+								chafaBinary,
+								buildSymbolsArgs(filePath, symbolsSettings),
+								{ timeoutMs: resolved.symbols.timeoutMs, signal },
+							)
+							.then((stdout) => d.cleanPayload(stdout));
+						// Settle-tracking only: prevents unhandled rejections for jobs a
+						// prompt abort rethrow leaves behind; does not change outcomes.
+						void job.then(
+							() => releasePool(),
+							() => releasePool(),
 						);
-						const payload = d.cleanPayload(stdout);
-						const rows = payload === "" ? 0 : payload.split("\n").length;
-						const maxRows = resolved.symbols.maxRows;
-						let note: string | undefined = plan.note;
-						if (payload === "") {
-							note = "chafa produced no output";
-						} else if (rows >= maxRows) {
-							note = `output capped at maxRows=${maxRows} rows; the image was scaled down to fit`;
-						} else if (!note) {
-							// A format-degrade note (plan.note) outranks the width clamp,
-							// which outranks the forced-native-off degrade.
-							note =
-								widthClampNote ??
-								(nativeDegraded ? NATIVE_OFF_NOTE : undefined);
-						}
-						files.push({
-							path: filePath,
-							ok: true,
-							mode: "symbols",
+						chafaJobs.push({
+							index,
 							mimeType,
 							byteSize: bytes.byteLength,
-							note,
+							planNote: plan.note,
+							job,
 						});
-						payloads.push({ path: filePath, payload });
 					}
 				} catch (error) {
 					// A user abort surfaces mid-run (chafa's AbortError); rethrow the
@@ -611,12 +646,87 @@ export function buildShowImageTool(
 						throw error ?? abortError(signal);
 					}
 					// Per-file failure: record and continue (spec §8, mixed results).
-					files.push({
+					slots[index] = {
 						path: filePath,
 						ok: false,
 						mode,
 						note: (error as Error).message,
-					});
+					};
+				}
+			}
+
+			// Pass 2 — settle every chafa job. All in-flight jobs share the tool
+			// signal, so a genuine abort rejects them all promptly; the first
+			// abort-classified outcome rethrows the original error (invariant 4), a
+			// per-file failure records and continues (spec §8).
+			const outcomes = await Promise.allSettled(
+				chafaJobs.map((entry) => entry.job),
+			);
+			for (let i = 0; i < chafaJobs.length; i++) {
+				const entry = chafaJobs[i] as ChafaJob;
+				const filePath = matched[entry.index] as string;
+				const outcome = outcomes[i] as PromiseSettledResult<string>;
+				if (outcome.status === "rejected") {
+					const err = outcome.reason as
+						| { name?: string; code?: string }
+						| undefined;
+					if (
+						err?.name === "AbortError" ||
+						err?.code === "ABORT_ERR" ||
+						signal?.aborted
+					) {
+						throw outcome.reason ?? abortError(signal);
+					}
+					slots[entry.index] = {
+						path: filePath,
+						ok: false,
+						mode,
+						note: (outcome.reason as Error).message,
+					};
+					continue;
+				}
+				const payload = outcome.value;
+				const rows = payload === "" ? 0 : payload.split("\n").length;
+				const maxRows = resolved.symbols.maxRows;
+				let note: string | undefined = entry.planNote;
+				if (payload === "") {
+					note = "chafa produced no output";
+				} else if (rows >= maxRows) {
+					note = `output capped at maxRows=${maxRows} rows; the image was scaled down to fit`;
+				} else if (!note) {
+					// A format-degrade note (plan.note) outranks the width clamp,
+					// which outranks the forced-native-off degrade.
+					note =
+						widthClampNote ?? (nativeDegraded ? NATIVE_OFF_NOTE : undefined);
+				}
+				slots[entry.index] = {
+					path: filePath,
+					ok: true,
+					mode: "symbols",
+					mimeType: entry.mimeType,
+					byteSize: entry.byteSize,
+					note,
+				};
+				payloadByIndex.set(entry.index, payload);
+			}
+
+			// Assembly in match order from the slots — same shapes as the serial
+			// implementation consumed downstream (files, imageBlocks, payloads), so
+			// ordering, mixed-success handling and notes stay byte-identical (#036).
+			const files: ShowImageFile[] = [];
+			const imageBlocks: Array<{ data: string; mimeType: string }> = [];
+			// Per-file payloads are collected as { path, payload } pairs so a label can
+			// never drift out of alignment with its art (#005); the previous parallel
+			// arrays plus a filtered join could mis-pair blocks with names.
+			const payloads: Array<{ path: string; payload: string }> = [];
+			for (let i = 0; i < matched.length; i++) {
+				const file = slots[i] as ShowImageFile;
+				files.push(file);
+				const block = nativeBlocks.get(i);
+				if (block) imageBlocks.push(block);
+				const payload = payloadByIndex.get(i);
+				if (payload !== undefined) {
+					payloads.push({ path: matched[i] as string, payload });
 				}
 			}
 
