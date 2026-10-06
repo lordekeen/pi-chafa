@@ -24,7 +24,7 @@ import {
 	writeConfigFile,
 } from "../config.js";
 import { type ImageEnv, isTmux, resolveCapsImages } from "../detect.js";
-import { stripControls } from "../show-image.js";
+import { stripControls } from "../sanitize.js";
 import {
 	type AgentCapsImages,
 	type ChafaConfig,
@@ -422,7 +422,10 @@ function persistSetting(
 	const next = applyMenuChange(config, id, value);
 	if (!next) return null;
 	writeConfigFile(agentDir, next);
-	ui.notify(message(next), "info");
+	// Sanitize at the single notification funnel: every template (generic
+	// "updated to", binaryPath, symbolsSet) carries user-entered values, and
+	// invariant 3 requires no raw control bytes reach the TUI (#038).
+	ui.notify(stripControls(message(next)), "info");
 	return next;
 }
 

@@ -73,6 +73,31 @@ describe("expandTargets", () => {
 	it("throws no-files-matched for a glob with zero matches", () => {
 		expect(() => expandTargets("**/*.svg", dir)).toThrow(/no files matched \*\*\/\*\.svg/);
 	});
+	it("sanitizes control bytes in the directory error message (#038)", () => {
+		const evilDir = join(dir, "evil\x1b[2Jdir");
+		mkdirSync(evilDir);
+		let threw: Error | null = null;
+		try {
+			expandTargets(evilDir, dir);
+		} catch (error) {
+			threw = error as Error;
+		}
+		expect(threw).not.toBeNull();
+		expect(threw!.message).toContain("is a directory; show_image targets files");
+		expect(threw!.message).not.toContain("\x1b");
+	});
+	it("sanitizes control bytes in the no-match error message (#038)", () => {
+		const evil = "no\x07match*.png";
+		let threw: Error | null = null;
+		try {
+			expandTargets(evil, dir);
+		} catch (error) {
+			threw = error as Error;
+		}
+		expect(threw).not.toBeNull();
+		expect(threw!.message).toContain("no files matched");
+		expect(threw!.message).not.toContain("\x07");
+	});
 	it("matches a top-level file and a nested file for a ** glob", () => {
 		// Regression: **/ in any position matches zero-or-more directories, so a
 		// top-level file must not be silently omitted after resolution to an

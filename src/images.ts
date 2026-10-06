@@ -4,6 +4,8 @@ import { homedir } from "node:os";
 import { isAbsolute, join, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { stripControls } from "./sanitize.js";
+
 /** Directories never walked during magic-pattern expansion (documented guard). */
 const PRUNE_DIRS = new Set([".git", "node_modules"]);
 
@@ -204,7 +206,9 @@ export function expandTargets(
 			// a broken link throws ENOENT which the catch maps to [] (#001).
 			const stats = statSync(absPattern);
 			if (stats.isDirectory()) {
-				throw new Error(`${target} is a directory; show_image targets files`);
+				throw new Error(
+					`${stripControls(target)} is a directory; show_image targets files`,
+				);
 			}
 			if (!stats.isFile()) return [];
 			return [absPattern];
@@ -219,7 +223,7 @@ export function expandTargets(
 	const matches = walkFiles(root).filter((file) => regex.test(posix(file)));
 	if (matches.length === 0) {
 		throw new Error(
-			`no files matched ${target}. Try a narrower or wider pattern, or pass an explicit file path.`,
+			`no files matched ${stripControls(target)}. Try a narrower or wider pattern, or pass an explicit file path.`,
 		);
 	}
 	return matches;

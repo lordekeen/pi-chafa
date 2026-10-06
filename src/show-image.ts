@@ -26,6 +26,7 @@ import {
 	resolveCapsImages,
 } from "./detect.js";
 import { expandTargets, readBytes, sniffMime } from "./images.js";
+import { stripControls } from "./sanitize.js";
 import type {
 	AgentCapsImages,
 	ChafaOverrides,
@@ -163,17 +164,6 @@ function basenameOf(filePath: string): string {
 // the cleaner regexes in chafa.ts: the committed biome gate flags
 // control-character escapes inside regex literals
 // (lint/suspicious/noControlCharactersInRegex), and its --fix would inline a
-// `new RegExp(<static string>)` back into a literal.
-const ESC = "\x1b";
-const CONTROL_CHARS = "[\x00-\x1f\x7f]";
-const CONTROL_RE = new RegExp(CONTROL_CHARS, "g");
-const CSI_RE = new RegExp(`${ESC}\\[[0-9;?]*[ -/]*[@-~]`, "g");
-
-/** Strip control characters and ANSI escapes from path/label-derived text (AGENTS.md invariant 3). */
-export function stripControls(s: string): string {
-	return s.replace(CSI_RE, "").replace(CONTROL_RE, "");
-}
-
 /**
  * Build an abort-shaped error a caller can classify (AGENTS.md invariant 4;
  * DESIGN.md §4 chose AbortError propagation). Prefers the signal's own reason
@@ -421,7 +411,7 @@ export function buildShowImageTool(
 			const matched = d.expandTargets(target, cwd);
 			if (matched.length === 0) {
 				throw new Error(
-					`no files matched ${target}. Try a narrower or wider pattern, or pass an explicit file path.`,
+					`no files matched ${stripControls(target)}. Try a narrower or wider pattern, or pass an explicit file path.`,
 				);
 			}
 

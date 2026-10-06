@@ -498,6 +498,24 @@ describe("show_image execute — input validation", () => {
 			/no files matched/,
 		);
 	});
+	it("sanitizes control bytes in the no-match error (#038)", async () => {
+		const { tool, ctx } = makeTool();
+		let threw: Error | null = null;
+		try {
+			await tool.execute(
+				"t8b",
+				{ path: "evil\x1b[2J.png" },
+				neverAbort(),
+				noop as never,
+				ctx,
+			);
+		} catch (error) {
+			threw = error as Error;
+		}
+		expect(threw).not.toBeNull();
+		expect(threw!.message).toContain("no files matched");
+		expect(threw!.message).not.toContain("\x1b");
+	});
 });
 
 describe("show_image execute — forced native on non-native caps errors (spec §7.2 last row)", () => {

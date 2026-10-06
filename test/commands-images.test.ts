@@ -563,6 +563,66 @@ describe("runImagesCommand", () => {
 		expect(message).toContain("bogus");
 	});
 
+	it("sanitizes the saved symbolsSet notification from the 'e' edit path (#038)", async () => {
+		const pi = { getAllTools: () => [] };
+		const notifyMock = vi.fn();
+		const inputMock = vi.fn().mockResolvedValueOnce("evil\x1b[2Jset");
+		let handleInput: ((data: string) => void) | undefined;
+
+		const customMock = vi.fn().mockImplementation(async (cb) => {
+			const tui = { requestRender: vi.fn() };
+			const theme = {
+				fg: (_c: string, text: string) => text,
+				bold: (text: string) => text,
+			};
+			if (customMock.mock.calls.length === 1) {
+				// First mount: wire done() to resolve the ui.custom promise, move the
+				// cursor to the Symbols set row (index 3) and press 'e'.
+				let resolveDone: (r: { action: string; id?: string }) => void =
+					() => {};
+				const promise = new Promise<{ action: string; id?: string }>(
+					(resolve) => {
+						resolveDone = resolve;
+					},
+				);
+				const component = cb(
+					tui,
+					theme,
+					{},
+					(r: { action: string; id?: string }) => resolveDone(r),
+				) as {
+					handleInput: (data: string) => void;
+				};
+				handleInput = component.handleInput;
+				// Symbols set is row 3 (preferNative, colors, dither, symbolsSet).
+				// Arrow keys arrive as legacy escape sequences, not bare names.
+				handleInput("\x1b[B");
+				handleInput("\x1b[B");
+				handleInput("\x1b[B");
+				handleInput("e");
+				return promise;
+			}
+			return { action: "done" };
+		});
+
+		const ctx = {
+			ui: {
+				custom: customMock,
+				select: vi.fn(),
+				notify: notifyMock,
+				input: inputMock,
+			},
+		};
+
+		await runImagesCommand(pi as never, "", ctx as never);
+
+		const messages = notifyMock.mock.calls.map((call) => call[0] as string);
+		const saved = messages.find((m) => m.includes("symbolsSet"));
+		expect(saved).toBeDefined();
+		expect(saved).toContain("evilset");
+		expect(saved).not.toContain("\x1b");
+	});
+
 	it("closes the panel on lowercase q and documents it in the hint (#003)", async () => {
 		const pi = { getAllTools: () => [] };
 		const doneMock = vi.fn();
