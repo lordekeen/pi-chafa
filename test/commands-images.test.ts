@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -8,7 +8,7 @@ import {
 	TUI_KEYBINDINGS,
 } from "@earendil-works/pi-tui";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { DEFAULT_CONFIG, loadConfig } from "../src/config.js";
+import { DEFAULT_CONFIG, loadConfig, writeConfigFile } from "../src/config.js";
 import {
 	SETTING_DESCRIPTIONS,
 	applyMenuChange,
@@ -1056,6 +1056,157 @@ describe("runImagesCommand", () => {
 		expect(statusOptions.join("\n")).toContain("pi-pretty-style read override: ");
 		expect(statusOptions.join("\n")).toContain("chafa: ");
 	});
+
+	describe("staged persistence (#045)", () => {
+	const mountPanel = async (opts: {
+		simulate?: (component: {
+			handleInput: (d: string) => void;
+			render: (w: number) => string[];
+		}) => void;
+		deps?: Parameters<typeof runImagesCommandRaw>[3];
+	}) => {
+		const notifyMock = vi.fn();
+		let resolvePanel: (r: unknown) => void = () => {};
+		let mounted: { handleInput: (d: string) => void; render: (w: number) => string[] } | undefined;
+		const customMock = vi.fn().mockImplementation(async (cb) => {
+			const component = cb(
+				{ requestRender: vi.fn() },
+				{
+					fg: (_c: string, text: string) => text,
+					bold: (text: string) => text,
+				},
+				getKeybindings(),
+				(r: unknown) => resolvePanel(r),
+			) as { handleInput: (d: string) => void; render: (w: number) => string[] };
+			if (customMock.mock.calls.length === 1) {
+				mounted = component;
+				// Wire the resolver BEFORE simulating keys: done() can fire during
+				// the simulation (Esc, Ctrl+S) and must land on a live resolver.
+				const promise = new Promise((res) => {
+					resolvePanel = res;
+				});
+				opts.simulate?.(component);
+				return promise;
+			}
+			return { action: "done" };
+		});
+		const run = runImagesCommand(
+			{ getAllTools: () => [] } as never,
+			"",
+			{
+				mode: "tui",
+				hasUI: true,
+				ui: {
+					custom: customMock,
+					select: vi.fn(),
+					notify: notifyMock,
+					input: vi.fn(),
+				},
+			} as never,
+			opts.deps,
+		);
+		return { run, notifyMock, mounted: () => mounted };
+	};
+
+	it("stages edits: Esc discards and the file stays byte-identical (#045)", async () => {
+		writeFileSync(join(testDir, "pi-chafa.json"), JSON.stringify({ cellWidth: 71 }));
+		const before = readFileSync(join(testDir, "pi-chafa.json"), "utf8");
+		const { run, notifyMock } = await mountPanel({
+			simulate: (c) => {
+				c.handleInput("\r"); // cycle Prefer native → false
+				c.handleInput("\x1b"); // Esc: cancel
+			},
+		});
+		await run;
+		expect(readFileSync(join(testDir, "pi-chafa.json"), "utf8")).toBe(before);
+		expect(notifyMock).toHaveBeenCalledWith(
+			"pi-chafa: settings unchanged (cancelled)",
+			"info",
+		);
+	});
+
+	it("Ctrl+S writes the draft exactly once and reports the count and file (#045)", async () => {
+		const realWrite = writeConfigFile;
+		const writeSpy = vi.fn((dir: string, cfg: unknown) => realWrite(dir, cfg as ChafaConfig));
+		const { run, notifyMock } = await mountPanel({
+			deps: { writeConfigFile: writeSpy },
+			simulate: (c) => {
+				c.handleInput("\r"); // Prefer native → false
+				c.handleInput("\x1b[B"); // down to Color mode
+				c.handleInput("\r"); // cycle colors
+				c.handleInput("\x13"); // Ctrl+S
+			},
+		});
+		await run;
+		expect(writeSpy).toHaveBeenCalledTimes(1);
+		const saved = loadConfig(testDir);
+		expect(saved.preferNative).toBe(false);
+		expect(saved.colors).not.toBe("240");
+		expect(notifyMock).toHaveBeenCalledWith(
+			`pi-chafa: 2 settings saved to ${testDir}/pi-chafa.json`,
+			"info",
+		);
+	});
+
+	it("a clean Ctrl+S closes without writing (#045)", async () => {
+		const realWrite = writeConfigFile;
+		const writeSpy = vi.fn((dir: string, cfg: unknown) => realWrite(dir, cfg as ChafaConfig));
+		const { run, notifyMock } = await mountPanel({
+			deps: { writeConfigFile: writeSpy },
+			simulate: (c) => {
+				c.handleInput("\x13");
+			},
+		});
+		await run;
+		expect(writeSpy).not.toHaveBeenCalled();
+		expect(notifyMock).toHaveBeenCalledWith("pi-chafa: settings unchanged", "info");
+	});
+
+	it("advertises the save chord only while the draft differs (#045)", async () => {
+		let panel: { handleInput: (d: string) => void; render: (w: number) => string[] } | undefined;
+		const { run } = await mountPanel({
+			simulate: (c) => {
+				panel = c;
+			},
+		});
+		await vi.waitFor(() => {
+			expect(panel).toBeDefined();
+		});
+		const clean = panel?.render(80).join("\n") ?? "";
+		expect(clean).toContain("Esc/q close");
+		expect(clean).not.toContain("Ctrl+S");
+		panel?.handleInput("\r"); // dirty it
+		const dirty = panel?.render(80).join("\n") ?? "";
+		expect(dirty).toContain("unsaved changes — Ctrl+S saves and closes · Esc discards");
+		expect(dirty).not.toContain("Esc/q close");
+		panel?.handleInput("\x1b"); // close so the command ends
+		await run;
+	});
+
+	it("a failed write warns, keeps the draft, and leaves the panel open (#045)", async () => {
+		chmodSync(testDir, 0o555);
+		const { run, notifyMock, mounted } = await mountPanel({
+			simulate: (c) => {
+				c.handleInput("\r"); // dirty
+				c.handleInput("\x13"); // Ctrl+S → write fails
+			},
+			});
+			await vi.waitFor(() => {
+				expect(notifyMock).toHaveBeenCalledWith(
+					expect.stringContaining("could not save settings"),
+					"warning",
+				);
+			});
+			// Panel still open: no done fired (resolve it manually to end the test).
+			await vi.waitFor(() => {
+				expect(mounted()).toBeDefined();
+			});
+		chmodSync(testDir, 0o755);
+		mounted()?.handleInput("\x13"); // retry succeeds
+		await run;
+		expect(loadConfig(testDir).preferNative).toBe(false);
+	});
+});
 
 	it("reaches the select flow in RPC mode instead of silently returning (#039)", async () => {
 		const pi = { getAllTools: () => [] };

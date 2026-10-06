@@ -378,6 +378,8 @@ export interface ImagesCommandDeps {
 	readHostImageSettings: (agentDir: string) => HostImageSettings;
 	/** Terminal image capability singleton (`getCapabilities().images`). */
 	capsImages: () => AgentCapsImages;
+	/** Atomic pi-chafa.json write — injectable for write-count assertions (#045). */
+	writeConfigFile: (agentDir: string, config: ChafaConfig) => void;
 }
 
 function defaultImagesDeps(): ImagesCommandDeps {
@@ -385,6 +387,7 @@ function defaultImagesDeps(): ImagesCommandDeps {
 		probeChafa: cachedProbe,
 		readHostImageSettings,
 		capsImages: () => getCapabilities().images,
+		writeConfigFile,
 	};
 }
 
@@ -458,9 +461,27 @@ async function buildRuntimeFacts(
 }
 
 type WizardAction =
-	| { action: "done" }
+	| { action: "done"; report?: string }
+	| { action: "cancelled" }
 	| { action: "status" }
 	| { action: "input"; id: string };
+
+/** The eight user-settable fields of pi-chafa.json (spec §6.1), for staged-change counting (#045). */
+const SETTING_KEYS = [
+	"preferNative",
+	"colors",
+	"dither",
+	"symbolsSet",
+	"cellWidth",
+	"maxRows",
+	"timeoutMs",
+	"binaryPath",
+] as const;
+
+/** Number of settings that differ between two configs (field-by-field, #045). */
+function countChanges(a: ChafaConfig, b: ChafaConfig): number {
+	return SETTING_KEYS.filter((key) => a[key] !== b[key]).length;
+}
 
 /**
  * Interactive wizard: pick or cycle settings inline with descriptions,
@@ -520,8 +541,17 @@ export async function runImagesCommand(
 	// nothing (#039).
 	if (ctx.mode === "tui" && typeof ui.custom === "function") {
 		const detectedBinary = await probeDetected();
+
+		// #045 staged persistence: the host SettingsList frame promises "Esc to
+		// cancel" (its hint line is fixed), so no edit may reach the file before
+		// an explicit confirm. `base` = the file state at panel open; `draft`
+		// accumulates edits; Ctrl+S and the Done row (#047) are the only writers;
+		// Esc discards. The fallback select flow keeps its per-step persistence
+		// (dialog frames promise nothing — honest as-is).
+		const base = config;
+		let draft = config;
 		for (;;) {
-			const items = buildSettingItems(config, detectedBinary);
+			const items = buildSettingItems(draft, detectedBinary);
 			let currentIndex = 0;
 
 			const result = await ui.custom<WizardAction>((tui, theme, kb, done) => {
@@ -530,44 +560,74 @@ export async function runImagesCommand(
 					Math.min(items.length + 2, 12),
 					createSettingsTheme(theme),
 					(id, newValue) => {
-						const next = persistSetting(
-							config,
-							agentDir,
-							ui,
-							id,
-							newValue,
-							() => `pi-chafa: ${id} updated to ${newValue}`,
-						);
-						if (next) {
-							config = next;
-							tui.requestRender();
-						}
+						// Stage only: parse + validate into the draft; nothing touches
+						// the file until the confirm (#045).
+						const next = applyMenuChange(draft, id, newValue);
+						if (next) draft = next;
+						tui.requestRender();
 					},
-					() => done({ action: "done" }),
+					() => done({ action: "cancelled" }),
 					{ enableSearch: false },
 				);
 
 				const container = new Container();
 				container.addChild(new Text("pi-chafa Settings", 1, 0));
-				container.addChild(
-					new Text(
-						theme && typeof theme.fg === "function"
-							? theme.fg(
-									"dim",
-									"  ↑/↓ navigate · Enter/Space cycle · 'e' edit custom · Esc/q close",
-								)
-							: "  ↑/↓ navigate · Enter/Space cycle · 'e' edit custom · Esc/q close",
-						0,
-						0,
-					),
-				);
+				// The footer switches on dirty state: the save chord is advertised
+				// only while the draft differs from the file (#045).
+				const hint = new Text("", 0, 0);
+				const dim = (text: string): string =>
+					theme && typeof theme.fg === "function"
+						? theme.fg("dim", text)
+						: text;
+				const refreshHint = (): void => {
+					hint.setText(
+						dim(
+							countChanges(draft, base) > 0
+								? "unsaved changes — Ctrl+S saves and closes · Esc discards"
+								: "  ↑/↓ navigate · Enter/Space cycle · 'e' edit custom · Esc/q close",
+						),
+					);
+				};
+				refreshHint();
+				container.addChild(hint);
 				container.addChild(new Spacer(1));
 				container.addChild(list);
+
+				// The one confirm: write once, close, report the count and file.
+				// A failed write warns, keeps the draft, and leaves the panel open
+				// for a retry (#045).
+				const saveAndClose = (): void => {
+					const n = countChanges(draft, base);
+					if (n === 0) {
+						done({ action: "done", report: "pi-chafa: settings unchanged" });
+						return;
+					}
+					try {
+						d.writeConfigFile(agentDir, draft);
+						done({
+							action: "done",
+							report: `pi-chafa: ${n} setting${n === 1 ? "" : "s"} saved to ${agentDir}/pi-chafa.json`,
+						});
+					} catch (error) {
+						ui.notify(
+							`pi-chafa: could not save settings — ${(error as Error).message}`,
+							"warning",
+						);
+						tui.requestRender();
+					}
+				};
 
 				return {
 					render: (w: number) => container.render(w),
 					invalidate: () => container.invalidate(),
 					handleInput: (data: string) => {
+						// Ctrl+S = confirm, intercepted BEFORE the list can route the
+						// key anywhere (search/submenu keys would swallow it otherwise;
+						// #045).
+						if (matchesKey(data, Key.ctrl("s"))) {
+							saveAndClose();
+							return;
+						}
 						// Single selection owner (#041): the mirror moves ONLY on the
 						// same factory-keybinding predicate the list itself uses, so it
 						// can never drift from the rendered highlight under remapped
@@ -622,11 +682,22 @@ export async function runImagesCommand(
 
 						list.handleInput(data);
 						tui.requestRender();
+						refreshHint();
 					},
 				};
 			});
 
 			if (!result || result.action === "done") {
+				// Outcome reports ride OUT of the panel (the toast outlives the
+				// modal; #045); a clean Ctrl+S carries a report too.
+				if (result?.report) ui.notify(result.report, "info");
+				return;
+			}
+
+			if (result.action === "cancelled") {
+				// Esc: the draft is discarded (closure-only) and the file is
+				// byte-identical; say so — silence reads as failure (#045).
+				ui.notify("pi-chafa: settings unchanged (cancelled)", "info");
 				return;
 			}
 
