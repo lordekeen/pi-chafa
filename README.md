@@ -25,9 +25,10 @@ Ask the agent to show an image: "show me docs/plot.png" — the agent calls the 
 
 Run `/images` to tune defaults (including `timeoutMs`) and inspect the runtime environment (the **effective** protocol and which source supplied it — `getCapabilities()`, `terminal.images`, or `PI_IMAGE_PROTOCOL` — plus host `showImages`, pi-pretty read override, chafa version):
 - <kbd>↑</kbd> / <kbd>↓</kbd> — Navigate settings
-- <kbd>Enter</kbd> / <kbd>Space</kbd> — Cycle through presets inline
-- <kbd>e</kbd> — Open modal to type a custom value
-- <kbd>Esc</kbd> / <kbd>q</kbd> — Save changes and close
+- <kbd>Enter</kbd> / <kbd>Space</kbd> — Cycle through presets inline (staged)
+- <kbd>e</kbd> — Open modal to type a custom value (staged)
+- <kbd>Ctrl</kbd>+<kbd>S</kbd> — Save the staged changes and close (the `Done` row does the same)
+- <kbd>Esc</kbd> / <kbd>q</kbd> — Discard the staged changes and close (the file stays untouched)
 
 `/images status` prints those runtime facts as a notification and returns without opening the panel. Any other argument warns and opens the panel (`show` / `reset` are **not** implemented yet).
 
