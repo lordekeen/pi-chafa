@@ -41,7 +41,7 @@ const { expandTargets, sniffMime, readBytes } = await import(pathToFileURL(join(
 const { readHostImageSettings, resolveConfig, writeConfigFile } = await import(pathToFileURL(join(DIST, "config.js")).href);
 const { resolveCapsImages, decideDelivery, isTmux, knownNoImageSupport } = await import(pathToFileURL(join(DIST, "detect.js")).href);
 const require = createRequire(join(REPO, "package.json"));
-const { getCapabilities } = await import(pathToFileURL(require.resolve("@earendil-works/pi-tui")).href);
+const { getCapabilities, setCapabilities } = await import(pathToFileURL(require.resolve("@earendil-works/pi-tui")).href);
 
 const ESC = "\x1b";
 let pass = 0;
@@ -206,21 +206,34 @@ async function main(work) {
 	const textOf = (r) => r.content.filter((c) => c.type === "text").map((c) => c.text).join("\n");
 
 	// 5a. The headline regression, using NO injected deps: the real defaultDeps ladder.
-	// In a clean environment (no tmux/screen/Alacritty markers) getCapabilities().images
-	// is genuinely null, and pi's terminal.images setting must still resolve native.
+	// The ladder's settings rung (null host caps + pi's terminal.images declaration)
+	// only applies where pi's own detection finds no protocol: on an image-capable
+	// terminal getCapabilities().images is already "kitty"/"iterm2", so asserting
+	// caps === null failed the whole run there — and skipped the rung it names.
+	// Force that rung through pi-tui's own test seam and restore the real caps after,
+	// so the check holds on every terminal.
 	// Inside a guard-denied environment (#026) the same declaration must instead
 	// resolve symbols and emit no image block — the guard, not the declaration, wins.
 	const capsNow = getCapabilities().images;
 	const guardDenies = isTmux(process.env) || knownNoImageSupport(process.env, process.platform);
 	console.log(`  (env: TERM=${process.env.TERM} TERM_PROGRAM=${process.env.TERM_PROGRAM} TMUX=${process.env.TMUX ?? ""}; guard=${guardDenies ? "denies" : "allows"}; getCapabilities().images=${JSON.stringify(capsNow)}; settings terminal.images=kitty)`);
 	const toolReal = buildShowImageTool();
-	const nativeRes = await toolReal.execute("s1", { path: join(work, "img.png") }, undefined, undefined, ctx);
+	let nativeRes;
 	if (guardDenies) {
+		nativeRes = await toolReal.execute("s1", { path: join(work, "img.png") }, undefined, undefined, ctx);
 		check("5a #026 guard wins over the settings declaration -> symbols", nativeRes.details.mode === "symbols", JSON.stringify(nativeRes.details.mode));
 		check("5a #026 guard emits no image block", !nativeRes.content.some((c) => c.type === "image"), JSON.stringify(nativeRes.content.map((c) => c.type)));
 		check("5a #026 guard still delivers real chafa art", (nativeRes.details.payload ?? "").includes(ESC), `len=${(nativeRes.details.payload ?? "").length}`);
 	} else {
-		check("5a caps really is null here, so the ladder is what resolves", capsNow === null, `caps=${JSON.stringify(capsNow)}`);
+		// The #026 regression shape: a host that cannot detect a protocol, with the
+		// settings declaration left as the only native source.
+		const realCaps = getCapabilities();
+		setCapabilities({ ...realCaps, images: null });
+		try {
+			nativeRes = await toolReal.execute("s1", { path: join(work, "img.png") }, undefined, undefined, ctx);
+		} finally {
+			setCapabilities(realCaps);
+		}
 		check("5a native chosen via the settings ladder despite null caps", nativeRes.details.mode === "native", JSON.stringify(nativeRes.details.mode));
 		const imgBlock = nativeRes.content.find((c) => c.type === "image");
 		check("5a image content block emitted", Boolean(imgBlock), JSON.stringify(nativeRes.content.map((c) => c.type)));
