@@ -650,54 +650,24 @@ describe("runImagesCommand", () => {
 		expect(message).toContain("bogus");
 	});
 
-	it("sanitizes the saved symbolsSet notification from the 'e' edit path (#038)", async () => {
+	it("sanitizes a saved binaryPath value in the fallback flow's notification (#038)", async () => {
+		// The staged TUI panel never notifies user values (only the save report,
+		// which carries no field value); the RPC fallback flow still persists and
+		// notifies per confirmed step, so THAT is where free-text value
+		// sanitization is observable (#038, #046).
 		const pi = { getAllTools: () => [] };
 		const notifyMock = vi.fn();
-		const inputMock = vi.fn().mockResolvedValueOnce("evil\x1b[2Jset");
-		let handleInput: ((data: string) => void) | undefined;
-
-		const customMock = vi.fn().mockImplementation(async (cb) => {
-			const tui = { requestRender: vi.fn() };
-			const theme = {
-				fg: (_c: string, text: string) => text,
-				bold: (text: string) => text,
-			};
-			if (customMock.mock.calls.length === 1) {
-				// First mount: wire done() to resolve the ui.custom promise, move the
-				// cursor to the Symbols set row (index 3) and press 'e'.
-				let resolveDone: (r: { action: string; id?: string }) => void =
-					() => {};
-				const promise = new Promise<{ action: string; id?: string }>(
-					(resolve) => {
-						resolveDone = resolve;
-					},
-				);
-				const component = cb(
-					tui,
-					theme,
-					getKeybindings(),
-					(r: { action: string; id?: string }) => resolveDone(r),
-				) as {
-					handleInput: (data: string) => void;
-				};
-				handleInput = component.handleInput;
-				// Symbols set is row 3 (preferNative, colors, dither, symbolsSet).
-				// Arrow keys arrive as legacy escape sequences, not bare names.
-				handleInput("\x1b[B");
-				handleInput("\x1b[B");
-				handleInput("\x1b[B");
-				handleInput("e");
-				return promise;
-			}
-			return { action: "done" };
-		});
-
+		const selectMock = vi
+			.fn()
+			.mockResolvedValueOnce(`Binary path: (auto on PATH) — ${SETTING_DESCRIPTIONS.binaryPath}`)
+			.mockResolvedValueOnce("Type custom path...")
+			.mockResolvedValueOnce(`Done — ${SETTING_DESCRIPTIONS.done}`);
+		const inputMock = vi.fn().mockResolvedValueOnce("/evil\x1b[2Jbin/chafa");
 		const ctx = {
-			mode: "tui",
+			mode: "rpc",
 			hasUI: true,
 			ui: {
-				custom: customMock,
-				select: vi.fn(),
+				select: selectMock,
 				notify: notifyMock,
 				input: inputMock,
 			},
@@ -706,9 +676,9 @@ describe("runImagesCommand", () => {
 		await runImagesCommand(pi as never, "", ctx as never);
 
 		const messages = notifyMock.mock.calls.map((call) => call[0] as string);
-		const saved = messages.find((m) => m.includes("symbolsSet"));
+		const saved = messages.find((m) => m.includes("saved binaryPath"));
 		expect(saved).toBeDefined();
-		expect(saved).toContain("evilset");
+		expect(saved).toContain("/evilbin/chafa");
 		expect(saved).not.toContain("\x1b");
 	});
 
@@ -841,7 +811,8 @@ describe("runImagesCommand", () => {
 			if (invocation === 1) {
 				return { action: "input", id: "binaryPath" };
 			}
-			return { action: "done" };
+			// Staged (#046): the dialog value lands in the draft; Ctrl+S writes it.
+			return { action: "done", report: undefined };
 		});
 
 		const ctx = {
@@ -861,8 +832,8 @@ describe("runImagesCommand", () => {
 			"Chafa binary path",
 			expect.any(String),
 		);
-		const cfg = loadConfig(testDir);
-		expect(cfg.binaryPath).toBe("/custom/chafa");
+		// No write happened (staged; the mock never confirmed).
+		expect(loadConfig(testDir).binaryPath).toBeNull();
 	});
 
 	it("handles structured binary path choices in fallback mode", async () => {
@@ -951,12 +922,13 @@ describe("runImagesCommand", () => {
 		);
 	});
 
-	it("persists timeoutMs through the TUI custom-input path", async () => {
+	it("stages timeoutMs through the TUI custom-input path and writes on Ctrl+S (#046)", async () => {
 		const pi = { getAllTools: () => [] };
 		const notifyMock = vi.fn();
 		const inputMock = vi.fn().mockResolvedValue("30000");
 
 		let invocation = 0;
+		let panel: { handleInput: (d: string) => void } | undefined;
 		const customMock = vi.fn().mockImplementation(async (cb) => {
 			invocation++;
 			const tui = { requestRender: vi.fn() };
@@ -964,8 +936,13 @@ describe("runImagesCommand", () => {
 				fg: (_c: string, text: string) => text,
 				bold: (text: string) => text,
 			};
-			cb(tui, theme, getKeybindings(), () => {});
-			if (invocation === 1) return { action: "input", id: "timeoutMs" };
+			const component = cb(tui, theme, getKeybindings(), () => {}) as {
+				handleInput: (d: string) => void;
+			};
+			if (invocation === 1) {
+				return { action: "input", id: "timeoutMs" };
+			}
+			panel = component;
 			return { action: "done" };
 		});
 
@@ -986,11 +963,10 @@ describe("runImagesCommand", () => {
 			"New timeoutMs (milliseconds)",
 			expect.any(String),
 		);
+		// Staged: the dialog value landed in the draft; confirming with Ctrl+S
+		// writes it (the save report itself is covered by the #045/#046 suites).
+		panel?.handleInput("\x13");
 		expect(loadConfig(testDir).timeoutMs).toBe(30000);
-		expect(notifyMock).toHaveBeenCalledWith(
-			"pi-chafa: saved timeoutMs = 30000",
-			"info",
-		);
 	});
 
 	it("warns and keeps the previous timeoutMs when TUI input is invalid", async () => {
@@ -1059,14 +1035,20 @@ describe("runImagesCommand", () => {
 
 	describe("staged persistence (#045)", () => {
 	const mountPanel = async (opts: {
-		simulate?: (component: {
-			handleInput: (d: string) => void;
-			render: (w: number) => string[];
-		}) => void;
+		simulate?: (
+			component: {
+				handleInput: (d: string) => void;
+				render: (w: number) => string[];
+			},
+			mountIndex: number,
+		) => void;
 		deps?: Parameters<typeof runImagesCommandRaw>[3];
+		input?: (prompt: string) => string | undefined;
 	}) => {
+		const userInput = opts.input ?? (() => undefined);
 		const notifyMock = vi.fn();
 		let resolvePanel: (r: unknown) => void = () => {};
+		let lastAction: unknown = { action: "done" };
 		let mounted: { handleInput: (d: string) => void; render: (w: number) => string[] } | undefined;
 		const customMock = vi.fn().mockImplementation(async (cb) => {
 			const component = cb(
@@ -1076,7 +1058,10 @@ describe("runImagesCommand", () => {
 					bold: (text: string) => text,
 				},
 				getKeybindings(),
-				(r: unknown) => resolvePanel(r),
+				(r: unknown) => {
+					lastAction = r;
+					resolvePanel(r);
+				},
 			) as { handleInput: (d: string) => void; render: (w: number) => string[] };
 			if (customMock.mock.calls.length === 1) {
 				mounted = component;
@@ -1085,10 +1070,11 @@ describe("runImagesCommand", () => {
 				const promise = new Promise((res) => {
 					resolvePanel = res;
 				});
-				opts.simulate?.(component);
+				opts.simulate?.(component, 1);
 				return promise;
 			}
-			return { action: "done" };
+			opts.simulate?.(component, customMock.mock.calls.length);
+			return lastAction; // the action the simulated keys produced
 		});
 		const run = runImagesCommand(
 			{ getAllTools: () => [] } as never,
@@ -1100,7 +1086,7 @@ describe("runImagesCommand", () => {
 					custom: customMock,
 					select: vi.fn(),
 					notify: notifyMock,
-					input: vi.fn(),
+					input: userInput,
 				},
 			} as never,
 			opts.deps,
@@ -1206,6 +1192,87 @@ describe("runImagesCommand", () => {
 		await run;
 		expect(loadConfig(testDir).preferNative).toBe(false);
 	});
+
+	it("stages 'e' custom-edit values: Esc after an 'e'-edit leaves the file byte-identical (#046)", async () => {
+		writeFileSync(join(testDir, "pi-chafa.json"), JSON.stringify({ cellWidth: 71 }));
+		const before = readFileSync(join(testDir, "pi-chafa.json"), "utf8");
+		const realWrite = writeConfigFile;
+		const writeSpy = vi.fn((dir: string, cfg: unknown) => realWrite(dir, cfg as ChafaConfig));
+		const { run, notifyMock } = await mountPanel({
+			deps: { writeConfigFile: writeSpy },
+			input: () => "moon+triangle",
+			simulate: (c, mount) => {
+				if (mount === 1) {
+					// Symbols set is row 3; press 'e' to edit it.
+					c.handleInput("\x1b[B");
+					c.handleInput("\x1b[B");
+					c.handleInput("\x1b[B");
+					c.handleInput("e");
+				} else {
+					c.handleInput("\x1b"); // Esc discards
+				}
+			},
+		});
+		await run;
+		expect(readFileSync(join(testDir, "pi-chafa.json"), "utf8")).toBe(before);
+		expect(writeSpy).not.toHaveBeenCalled();
+		expect(notifyMock).toHaveBeenCalledWith(
+			"pi-chafa: settings unchanged (cancelled)",
+			"info",
+		);
+	});
+
+	it("includes 'e' custom edits in the single Ctrl+S write and report (#046)", async () => {
+		const realWrite = writeConfigFile;
+		const writeSpy = vi.fn((dir: string, cfg: unknown) => realWrite(dir, cfg as ChafaConfig));
+		const { run, notifyMock } = await mountPanel({
+			deps: { writeConfigFile: writeSpy },
+			input: () => "moon+triangle",
+			simulate: (c, mount) => {
+				if (mount === 1) {
+					c.handleInput("\x1b[B");
+					c.handleInput("\x1b[B");
+					c.handleInput("\x1b[B");
+					c.handleInput("e");
+				} else {
+					c.handleInput("\x13"); // Ctrl+S
+				}
+			},
+		});
+		await run;
+		expect(writeSpy).toHaveBeenCalledTimes(1);
+		expect(loadConfig(testDir).symbolsSet).toBe("moon+triangle");
+		expect(notifyMock).toHaveBeenCalledWith(
+			`pi-chafa: 1 setting saved to ${testDir}/pi-chafa.json`,
+			"info",
+		);
+	});
+
+	it("an invalid 'e' value warns, re-prompts, and never writes (#046)", async () => {
+		const realWrite = writeConfigFile;
+		const writeSpy = vi.fn((dir: string, cfg: unknown) => realWrite(dir, cfg as ChafaConfig));
+		const { run, notifyMock } = await mountPanel({
+			deps: { writeConfigFile: writeSpy },
+			input: () => "   ",
+			simulate: (c, mount) => {
+				if (mount === 1) {
+					c.handleInput("\x1b[B");
+					c.handleInput("\x1b[B");
+					c.handleInput("\x1b[B");
+					c.handleInput("e");
+				} else {
+					c.handleInput("\x1b");
+				}
+			},
+		});
+		await run;
+		expect(writeSpy).not.toHaveBeenCalled();
+		expect(notifyMock).toHaveBeenCalledWith(
+			"pi-chafa: invalid symbolsSet (cannot be empty)",
+			"warning",
+		);
+	});
+
 });
 
 	it("reaches the select flow in RPC mode instead of silently returning (#039)", async () => {

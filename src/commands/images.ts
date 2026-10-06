@@ -710,21 +710,20 @@ export async function runImagesCommand(
 
 			if (result.action === "input") {
 				const id = result.id;
+				// #046: the 'e' dialogs STAGE into the draft — no write, no per-field
+				// notification; the save report (Ctrl+S / Done) covers them, and Esc
+				// after an 'e'-edit leaves the file byte-identical. Invalid values
+				// keep the warn + re-prompt, never writing. The non-custom fallback
+				// flow below keeps its per-step persistence (dialog frames promise
+				// no cancel — honest as-is).
 				if (id === "cellWidth") {
 					const value = await ui.input(
 						"New cellWidth (columns)",
 						"integer columns (e.g. 72)",
 					);
 					if (value !== undefined) {
-						const next = persistSetting(
-							config,
-							agentDir,
-							ui,
-							"cellWidth",
-							value,
-							(next) => `pi-chafa: saved cellWidth = ${next.cellWidth}`,
-						);
-						if (next) config = next;
+						const next = applyMenuChange(draft, "cellWidth", value);
+						if (next) draft = next;
 						else
 							ui.notify(
 								"pi-chafa: invalid cellWidth (must be positive integer)",
@@ -737,15 +736,8 @@ export async function runImagesCommand(
 						"integer row cap (e.g. 60)",
 					);
 					if (value !== undefined) {
-						const next = persistSetting(
-							config,
-							agentDir,
-							ui,
-							"maxRows",
-							value,
-							(next) => `pi-chafa: saved maxRows = ${next.maxRows}`,
-						);
-						if (next) config = next;
+						const next = applyMenuChange(draft, "maxRows", value);
+						if (next) draft = next;
 						else
 							ui.notify(
 								"pi-chafa: invalid maxRows (must be positive integer)",
@@ -758,15 +750,8 @@ export async function runImagesCommand(
 						"integer milliseconds (e.g. 8000)",
 					);
 					if (value !== undefined) {
-						const next = persistSetting(
-							config,
-							agentDir,
-							ui,
-							"timeoutMs",
-							value,
-							(next) => `pi-chafa: saved timeoutMs = ${next.timeoutMs}`,
-						);
-						if (next) config = next;
+						const next = applyMenuChange(draft, "timeoutMs", value);
+						if (next) draft = next;
 						else
 							ui.notify(
 								"pi-chafa: invalid timeoutMs (must be positive integer)",
@@ -779,15 +764,8 @@ export async function runImagesCommand(
 						"chafa --symbols class list (e.g. block+border)",
 					);
 					if (value !== undefined) {
-						const next = persistSetting(
-							config,
-							agentDir,
-							ui,
-							"symbolsSet",
-							value,
-							(next) => `pi-chafa: saved symbolsSet = ${next.symbolsSet}`,
-						);
-						if (next) config = next;
+						const next = applyMenuChange(draft, "symbolsSet", value);
+						if (next) draft = next;
 						else
 							ui.notify(
 								"pi-chafa: invalid symbolsSet (cannot be empty)",
@@ -800,15 +778,8 @@ export async function runImagesCommand(
 						"absolute path to chafa, or empty to clear",
 					);
 					if (value !== undefined) {
-						const next = persistSetting(
-							config,
-							agentDir,
-							ui,
-							"binaryPath",
-							value,
-							binaryPathMessage,
-						);
-						if (next) config = next;
+						const next = applyMenuChange(draft, "binaryPath", value);
+						if (next) draft = next;
 					}
 				}
 			}
