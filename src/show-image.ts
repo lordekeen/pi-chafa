@@ -25,6 +25,7 @@ import {
 	NATIVE_SAFE_MIMES,
 	resolveCapsImages,
 } from "./detect.js";
+import { abortError } from "./abort.js";
 import { expandTargets, readBytes, sniffMime } from "./images.js";
 import { stripControls } from "./sanitize.js";
 import type {
@@ -99,7 +100,11 @@ export interface ShowImageDeps {
 	readHostImages: () => HostImageSettings;
 	/** First rung of the §6.4 ladder: the host's pi-tui capability singleton. */
 	getCapsImages: () => AgentCapsImages;
-	expandTargets: (target: string, cwd: string) => string[];
+	expandTargets: (
+		target: string,
+		cwd: string,
+		signal?: AbortSignal,
+	) => string[];
 	readBytes: (filePath: string) => Promise<Buffer>;
 	sniffMime: (bytes: Buffer) => string;
 	probeChafa: (
@@ -136,7 +141,10 @@ function defaultDeps(): ShowImageDeps {
 		// there is no host-settings read inside the ladder itself.
 		env: readEnv,
 		platform: readPlatform,
-		expandTargets,
+		// Rebind: expandTargets is (target, cwd, home?, signal?) but the seam
+		// exposes (target, cwd, signal?) — execute never overrides the home dir.
+		expandTargets: (target, cwd, signal) =>
+			expandTargets(target, cwd, undefined, signal),
 		readBytes,
 		sniffMime,
 		probeChafa: (binaryPath, signal) => cachedProbe(binaryPath, signal),
@@ -162,19 +170,6 @@ function basenameOf(filePath: string): string {
 // the cleaner regexes in chafa.ts: the committed biome gate flags
 // control-character escapes inside regex literals
 // (lint/suspicious/noControlCharactersInRegex), and its --fix would inline a
-/**
- * Build an abort-shaped error a caller can classify (AGENTS.md invariant 4;
- * DESIGN.md §4 chose AbortError propagation). Prefers the signal's own reason
- * when it is an Error (Node's DOMException AbortError carries name + code).
- */
-function abortError(signal: AbortSignal | undefined): Error {
-	const reason = signal?.reason;
-	if (reason instanceof Error) return reason;
-	const err = new Error("show_image was aborted") as Error & { code?: string };
-	err.name = "AbortError";
-	err.code = "ABORT_ERR";
-	return err;
-}
 
 /** Effective-settings snapshot recorded in details for renderers/transcript (spec §7.1 steps 2/5). */
 function settingsRecord(
@@ -409,9 +404,9 @@ export function buildShowImageTool(
 			const hostImages = d.readHostImages();
 
 			// Step 1 — resolve inputs (spec §7.1). expandTargets throws for a
-			// directory target and for a zero-match glob; a missing literal
-			// path expands to [] and is reported here (spec §8).
-			const matched = d.expandTargets(target, cwd);
+			// directory target, a zero-match glob and a >50-match glob (#035); a
+			// missing literal path expands to [] and is reported here (spec §8).
+			const matched = d.expandTargets(target, cwd, signal);
 			if (matched.length === 0) {
 				throw new Error(
 					`no files matched ${stripControls(target)}. Try a narrower or wider pattern, or pass an explicit file path.`,

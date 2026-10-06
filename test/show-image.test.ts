@@ -85,6 +85,7 @@ function makeTool(overrides: {
 	probeChafa?: ShowImageDeps["probeChafa"];
 	runChafa?: ShowImageDeps["runChafa"];
 	sniffMime?: ShowImageDeps["sniffMime"];
+	expandTargets?: ShowImageDeps["expandTargets"];
 	/** Injected environment/platform for the #026 guard + #030 hint (#031 seam). */
 	env?: ImageEnv;
 	platform?: string;
@@ -115,11 +116,13 @@ function makeTool(overrides: {
 				? { PI_IMAGE_PROTOCOL: overrides.envProtocol }
 				: {}),
 		}),
-		expandTargets: (target, cwd) => {
-			const abs = join(cwd, target);
-			if (abs === pngPath) return [abs];
-			return [];
-		},
+		expandTargets:
+			overrides.expandTargets ??
+			((target, cwd) => {
+				const abs = join(cwd, target);
+				if (abs === pngPath) return [abs];
+				return [];
+			}),
 		readBytes: async (path) => {
 			if (path !== pngPath) throw new Error(`failed to read ${path}: ENOENT`);
 			return Buffer.from(PNG_BASE64, "base64");
@@ -593,6 +596,28 @@ describe("show_image execute — capability fallback ladder (headline fix)", () 
 	});
 });
 
+describe("show_image execute — abort-aware expansion (#035)", () => {
+it("passes its abort signal into expandTargets", async () => {
+const seen: (AbortSignal | undefined)[] = [];
+const { tool, ctx } = makeTool({
+expandTargets: (_target, _cwd, signal) => {
+seen.push(signal);
+return [];
+},
+});
+const controller = new AbortController();
+await expect(
+tool.execute(
+"t-abort",
+{ path: "pic.png" },
+controller.signal,
+noop as never,
+ctx,
+),
+).rejects.toThrow(/no files matched/);
+expect(seen).toEqual([controller.signal]);
+});
+});
 describe("show_image execute — single host-settings read (#044)", () => {
 	it("reads host settings exactly once across config, ladder and delivery", async () => {
 		const prevProtocol = process.env.PI_IMAGE_PROTOCOL;

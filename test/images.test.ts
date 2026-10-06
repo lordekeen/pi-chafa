@@ -66,6 +66,34 @@ describe("expandTargets", () => {
 			join(dir, "screenshots", "b.jpg"),
 		]);
 	});
+	it("caps a broad glob at 50 matches with an actionable error (#035)", () => {
+		mkdirSync(join(dir, "many"), { recursive: true });
+		for (let i = 0; i < 60; i++) {
+			writeFileSync(join(dir, "many", `f${i}.png`), "png-bytes");
+		}
+		let threw: Error | null = null;
+		try {
+			expandTargets("many/*.png", dir);
+		} catch (error) {
+			threw = error as Error;
+		}
+		expect(threw).not.toBeNull();
+		expect(threw!.message).toContain("60");
+		expect(threw!.message).toContain("caps at 50");
+		expect(threw!.message).toContain("narrow the pattern");
+	});
+	it("honors an aborted signal during expansion (#035)", () => {
+		const controller = new AbortController();
+		controller.abort();
+		let threw: Error | null = null;
+		try {
+			expandTargets("**/*.png", dir, undefined, controller.signal);
+		} catch (error) {
+			threw = error as Error;
+		}
+		expect(threw).not.toBeNull();
+		expect(threw!.name).toBe("AbortError");
+	});
 	it("matches nested files with ** and skips directories", () => {
 		expect(expandTargets("**/*.gif", dir)).toEqual([join(dir, "sub", "c.gif")]);
 		expect(expandTargets("**/*.webp", dir)).toEqual([join(dir, "sub", "deep", "d.webp")]);

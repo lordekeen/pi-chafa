@@ -4,10 +4,17 @@ import { homedir } from "node:os";
 import { isAbsolute, join, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { abortError } from "./abort.js";
 import { stripControls } from "./sanitize.js";
 
 /** Directories never walked during magic-pattern expansion (documented guard). */
 const PRUNE_DIRS = new Set([".git", "node_modules"]);
+
+/**
+ * Match cap for magic-pattern expansion (spec §13 output caps, #035): a glob
+ * matching more files than this is a model mistake, not a bulk-render request.
+ */
+export const MAX_GLOB_MATCHES = 50;
 
 const MAGIC_RE = /[*?]/;
 
@@ -79,11 +86,15 @@ function searchRoot(absPattern: string): string {
 	return prefix === "" ? "/" : prefix;
 }
 
-function walkFiles(root: string): string[] {
+function walkFiles(root: string, signal?: AbortSignal): string[] {
+	if (signal?.aborted) throw abortError(signal);
 	const out: string[] = [];
 	let sawSymlink = false;
 	const stack = [root];
 	while (stack.length > 0) {
+		// Abort-insensitive walk = a hang the user cannot cancel (#035): check per
+		// directory so Ctrl-C during a broad walk is honored promptly.
+		if (signal?.aborted) throw abortError(signal);
 		const current = stack.pop() as string;
 		let entries: Dirent[];
 		try {
@@ -191,6 +202,7 @@ export function expandTargets(
 	target: string,
 	cwd: string,
 	home: string = homedir(),
+	signal?: AbortSignal,
 ): string[] {
 	if (typeof target !== "string" || target.trim() === "") {
 		throw new Error("show_image requires a non-empty path or glob");
@@ -220,7 +232,16 @@ export function expandTargets(
 
 	const regex = globToRegExp(absPattern);
 	const root = searchRoot(absPattern);
-	const matches = walkFiles(root).filter((file) => regex.test(posix(file)));
+	const matches = walkFiles(root, signal).filter((file) => regex.test(posix(file)));
+	// Output cap (spec §13, #035): rendering hundreds of matches is never the
+	// intent; reject before the per-file loop so a model-supplied wildcard over a
+	// large tree fails fast (<1 s) with an actionable message. Target-free by
+	// design — no sanitize dependency at this layer.
+	if (matches.length > MAX_GLOB_MATCHES) {
+		throw new Error(
+			`glob matched ${matches.length} files; show_image caps at ${MAX_GLOB_MATCHES} matches — narrow the pattern or pass explicit file paths`,
+		);
+	}
 	if (matches.length === 0) {
 		throw new Error(
 			`no files matched ${stripControls(target)}. Try a narrower or wider pattern, or pass an explicit file path.`,
