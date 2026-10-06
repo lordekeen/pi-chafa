@@ -394,6 +394,8 @@ describe("runImagesCommand", () => {
 			.mockResolvedValueOnce(`Done — ${SETTING_DESCRIPTIONS.done}`);
 
 		const ctx = {
+			mode: "rpc",
+			hasUI: true,
 			ui: {
 				select: selectMock,
 				notify: notifyMock,
@@ -432,6 +434,8 @@ describe("runImagesCommand", () => {
 		});
 
 		const ctx = {
+			mode: "tui",
+			hasUI: true,
 			ui: {
 				custom: customMock,
 				select: vi.fn(),
@@ -455,6 +459,8 @@ describe("runImagesCommand", () => {
 		const customMock = vi.fn();
 		const selectMock = vi.fn();
 		const ctx = {
+			mode: "tui",
+			hasUI: true,
 			ui: { custom: customMock, select: selectMock, notify: notifyMock, input: vi.fn() },
 		};
 
@@ -478,6 +484,8 @@ describe("runImagesCommand", () => {
 			const notifyMock = vi.fn();
 			const customMock = vi.fn();
 			await runImagesCommand(pi as never, arg, {
+				mode: "tui",
+				hasUI: true,
 				ui: { custom: customMock, select: vi.fn(), notify: notifyMock, input: vi.fn() },
 			} as never);
 			expect(customMock).not.toHaveBeenCalled();
@@ -499,6 +507,8 @@ describe("runImagesCommand", () => {
 			pi,
 			"status",
 			{
+				mode: "tui",
+				hasUI: true,
 				ui: {
 					custom: vi.fn(),
 					select: vi.fn(),
@@ -528,6 +538,8 @@ describe("runImagesCommand", () => {
 			return { action: "done" };
 		});
 		const ctx = {
+			mode: "tui",
+			hasUI: true,
 			ui: { custom: customMock, select: vi.fn(), notify: notifyMock, input: vi.fn() },
 		};
 
@@ -553,6 +565,8 @@ describe("runImagesCommand", () => {
 			return { action: "done" };
 		});
 		const ctx = {
+			mode: "tui",
+			hasUI: true,
 			ui: { custom: customMock, select: vi.fn(), notify: notifyMock, input: vi.fn() },
 		};
 
@@ -606,6 +620,8 @@ describe("runImagesCommand", () => {
 		});
 
 		const ctx = {
+			mode: "tui",
+			hasUI: true,
 			ui: {
 				custom: customMock,
 				select: vi.fn(),
@@ -645,6 +661,8 @@ describe("runImagesCommand", () => {
 		});
 
 		const ctx = {
+			mode: "tui",
+			hasUI: true,
 			ui: {
 				custom: customMock,
 				select: vi.fn(),
@@ -680,6 +698,8 @@ describe("runImagesCommand", () => {
 		});
 
 		const ctx = {
+			mode: "tui",
+			hasUI: true,
 			ui: {
 				custom: customMock,
 				select: vi.fn(),
@@ -713,6 +733,8 @@ describe("runImagesCommand", () => {
 		});
 
 		const ctx = {
+			mode: "tui",
+			hasUI: true,
 			ui: {
 				custom: customMock,
 				select: vi.fn(),
@@ -750,6 +772,8 @@ describe("runImagesCommand", () => {
 		});
 
 		const ctx = {
+			mode: "tui",
+			hasUI: true,
 			ui: {
 				custom: customMock,
 				select: vi.fn(),
@@ -780,6 +804,8 @@ describe("runImagesCommand", () => {
 			.mockResolvedValueOnce(`Done — ${SETTING_DESCRIPTIONS.done}`);
 
 		const ctx = {
+			mode: "rpc",
+			hasUI: true,
 			ui: {
 				select: selectMock,
 				notify: notifyMock,
@@ -807,6 +833,8 @@ describe("runImagesCommand", () => {
 			.mockResolvedValueOnce(`Done — ${SETTING_DESCRIPTIONS.done}`);
 
 		const ctx = {
+			mode: "rpc",
+			hasUI: true,
 			ui: { select: selectMock, notify: notifyMock, input: vi.fn() },
 		};
 
@@ -832,6 +860,8 @@ describe("runImagesCommand", () => {
 			.mockResolvedValueOnce(`Done — ${SETTING_DESCRIPTIONS.done}`);
 
 		const ctx = {
+			mode: "rpc",
+			hasUI: true,
 			ui: { select: selectMock, notify: notifyMock, input: inputMock },
 		};
 
@@ -867,6 +897,8 @@ describe("runImagesCommand", () => {
 		});
 
 		const ctx = {
+			mode: "tui",
+			hasUI: true,
 			ui: {
 				custom: customMock,
 				select: vi.fn(),
@@ -907,6 +939,8 @@ describe("runImagesCommand", () => {
 		});
 
 		const ctx = {
+			mode: "tui",
+			hasUI: true,
 			ui: {
 				custom: customMock,
 				select: vi.fn(),
@@ -936,6 +970,8 @@ describe("runImagesCommand", () => {
 			.mockResolvedValueOnce(`Done — ${SETTING_DESCRIPTIONS.done}`);
 
 		const ctx = {
+			mode: "rpc",
+			hasUI: true,
 			ui: { select: selectMock, notify: notifyMock, input: vi.fn() },
 		};
 
@@ -946,6 +982,135 @@ describe("runImagesCommand", () => {
 		expect(statusOptions.join("\n")).toContain("Host showImages: ");
 		expect(statusOptions.join("\n")).toContain("pi-pretty-style read override: ");
 		expect(statusOptions.join("\n")).toContain("chafa: ");
+	});
+
+	it("reaches the select flow in RPC mode instead of silently returning (#039)", async () => {
+		const pi = { getAllTools: () => [] };
+		const selectMock = vi.fn().mockResolvedValueOnce(
+			`Done — ${SETTING_DESCRIPTIONS.done}`,
+		);
+		const customMock = vi.fn();
+		const notifyMock = vi.fn();
+		await runImagesCommand(pi as never, "", {
+			mode: "rpc",
+			hasUI: true,
+			ui: {
+				custom: customMock,
+				select: selectMock,
+				notify: notifyMock,
+				input: vi.fn(),
+			},
+		} as never);
+		expect(customMock).not.toHaveBeenCalled();
+		expect(selectMock).toHaveBeenCalledTimes(1);
+	});
+
+	it("prints status to stdout in print mode (#039)", async () => {
+		const pi = { getAllTools: () => [] };
+		const writeSpy = vi
+			.spyOn(process.stdout, "write")
+			.mockImplementation(() => true);
+		try {
+			await runImagesCommand(
+				pi as never,
+				"status",
+				{
+					mode: "print",
+					hasUI: false,
+					ui: {
+						custom: vi.fn(),
+						select: vi.fn(),
+						notify: vi.fn(),
+						input: vi.fn(),
+					},
+				} as never,
+				{
+					probeChafa: async () => FAKE_PROBE,
+					readHostImageSettings: () => ({
+						showImages: true,
+						imageWidthCells: 60,
+						images: null,
+					}),
+				},
+			);
+			const [text] = writeSpy.mock.calls[0] as [string];
+			expect(text).toContain("Detected image protocol:");
+			expect(text.split("\n")).toHaveLength(5); // 4 facts + trailing newline
+		} finally {
+			writeSpy.mockRestore();
+		}
+	});
+
+	it("writes status to stderr in json mode, keeping stdout clean (#039)", async () => {
+		const pi = { getAllTools: () => [] };
+		const stdoutSpy = vi
+			.spyOn(process.stdout, "write")
+			.mockImplementation(() => true);
+		const stderrSpy = vi
+			.spyOn(process.stderr, "write")
+			.mockImplementation(() => true);
+		try {
+			await runImagesCommand(
+				pi as never,
+				"status",
+				{
+					mode: "json",
+					hasUI: false,
+					ui: {
+						custom: vi.fn(),
+						select: vi.fn(),
+						notify: vi.fn(),
+						input: vi.fn(),
+					},
+				} as never,
+				{
+					probeChafa: async () => FAKE_PROBE,
+					readHostImageSettings: () => ({
+						showImages: true,
+						imageWidthCells: 60,
+						images: null,
+					}),
+				},
+			);
+			expect(stdoutSpy).not.toHaveBeenCalled();
+			expect(stderrSpy).toHaveBeenCalledWith(
+				expect.stringContaining("Detected image protocol:"),
+			);
+		} finally {
+			stdoutSpy.mockRestore();
+			stderrSpy.mockRestore();
+		}
+	});
+
+	it("tells print users the panel is interactive-only and spawns no probe (#039)", async () => {
+		const pi = { getAllTools: () => [] };
+		const probe = vi.fn(async () => FAKE_PROBE);
+		const writeSpy = vi
+			.spyOn(process.stdout, "write")
+			.mockImplementation(() => true);
+		try {
+			await runImagesCommand(
+				pi as never,
+				"",
+				{
+					mode: "print",
+					hasUI: false,
+					ui: {
+						custom: vi.fn(),
+						select: vi.fn(),
+						notify: vi.fn(),
+						input: vi.fn(),
+					},
+				} as never,
+				{ probeChafa: probe },
+			);
+			const [text] = writeSpy.mock.calls[0] as [string];
+			expect(text).toContain("interactive-only");
+			expect(text).toContain("/images status");
+			expect(probe).not.toHaveBeenCalled();
+		} finally {
+			writeSpy.mockRestore();
+		}
 	});
 });
 

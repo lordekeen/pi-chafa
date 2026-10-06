@@ -486,7 +486,15 @@ export async function runImagesCommand(
 	const arg = rawArg.toLowerCase();
 	if (arg === "status") {
 		const facts = await buildRuntimeFacts(pi, config, agentDir, d);
-		ui.notify(describeRuntime(facts).join("\n"), "info");
+		const lines = describeRuntime(facts).join("\n");
+		// TUI and RPC notify; print/json write to the mode's channel — stdout in
+		// print, stderr in json, where stdout must stay a clean JSONL stream (#039).
+		if (ctx.mode === "tui" || ctx.hasUI) {
+			ui.notify(lines, "info");
+		} else {
+			const sink = ctx.mode === "json" ? process.stderr : process.stdout;
+			sink.write(`${lines}\n`);
+		}
 		return;
 	}
 	if (arg !== "") {
@@ -498,11 +506,21 @@ export async function runImagesCommand(
 		);
 	}
 
-	const systemChafa = await probeToFact(null, d.probeChafa);
-	const detectedBinary = systemChafa.present ? systemChafa.binary : undefined;
+	// The chafa --version probe feeds the panel's "Binary path" choices; it is
+	// spawned only where a consumer exists — never on the headless print/json
+	// path (#039).
+	const probeDetected = async (): Promise<string | undefined> => {
+		const systemChafa = await probeToFact(null, d.probeChafa);
+		return systemChafa.present ? systemChafa.binary : undefined;
+	};
 
-	// Primary interactive TUI interface: SettingsList with inline cycling & descriptions
-	if (typeof ui.custom === "function") {
+	// Interactive TUI panel only in an interactive session: `ctx.mode` is the
+	// guard, not the presence of `ui.custom` — the host supplies custom() in
+	// every mode, and outside the TUI it no-ops (RPC returns undefined; print/
+	// json binds a no-op UI context), which left the command silently doing
+	// nothing (#039).
+	if (ctx.mode === "tui" && typeof ui.custom === "function") {
+		const detectedBinary = await probeDetected();
 		for (;;) {
 			const items = buildSettingItems(config, detectedBinary);
 			let currentIndex = 0;
@@ -724,205 +742,220 @@ export async function runImagesCommand(
 		}
 	}
 
-	// Fallback interface when ui.custom is not available: ui.select with descriptions & sub-selects
-	for (;;) {
-		const items = buildSettingItems(config, detectedBinary);
-		const options = items.map((item) => {
-			if (item.id === "done" || item.id === "runtimeStatus") {
-				return `${item.label} — ${item.description}`;
+	// Dialog-capable non-TUI (RPC): hasUI is true in RPC per the host contract
+	// (#042), so the sequential select/input flow works there. The panel itself
+	// stays TUI-only: the host's SettingsList is an interactive component.
+	if (ctx.hasUI) {
+		const detectedBinary = await probeDetected();
+
+		// Fallback interface when ui.custom is not available: ui.select with descriptions & sub-selects
+		for (;;) {
+			const items = buildSettingItems(config, detectedBinary);
+			const options = items.map((item) => {
+				if (item.id === "done" || item.id === "runtimeStatus") {
+					return `${item.label} — ${item.description}`;
+				}
+				return `${item.label}: [${item.currentValue}] — ${item.description}`;
+			});
+
+			const choice = await ui.select("pi-chafa settings", options);
+			if (!choice || choice.startsWith("Done")) return;
+
+			if (choice.startsWith("Runtime status")) {
+				const facts = await buildRuntimeFacts(pi, config, agentDir, d);
+				const statusOptions = [...describeRuntime(facts), "Close"];
+				await ui.select("Runtime status (informational)", statusOptions);
+				continue;
 			}
-			return `${item.label}: [${item.currentValue}] — ${item.description}`;
-		});
 
-		const choice = await ui.select("pi-chafa settings", options);
-		if (!choice || choice.startsWith("Done")) return;
-
-		if (choice.startsWith("Runtime status")) {
-			const facts = await buildRuntimeFacts(pi, config, agentDir, d);
-			const statusOptions = [...describeRuntime(facts), "Close"];
-			await ui.select("Runtime status (informational)", statusOptions);
-			continue;
-		}
-
-		if (choice.startsWith("Prefer native")) {
-			const next = persistSetting(
-				config,
-				agentDir,
-				ui,
-				"preferNative",
-				"",
-				(next) =>
-					`pi-chafa: preferNative is now ${next.preferNative ? "true (native preferred)" : "false (symbols forced)"}`,
-			);
-			if (next) config = next;
-			continue;
-		}
-
-		if (choice.startsWith("Color mode")) {
-			const picked = await ui.select("Select color mode", [...COLOR_MODES]);
-			if (picked) {
+			if (choice.startsWith("Prefer native")) {
 				const next = persistSetting(
 					config,
 					agentDir,
 					ui,
-					"colors",
-					picked,
-					(next) => `pi-chafa: color mode is now ${next.colors}`,
+					"preferNative",
+					"",
+					(next) =>
+						`pi-chafa: preferNative is now ${next.preferNative ? "true (native preferred)" : "false (symbols forced)"}`,
 				);
 				if (next) config = next;
+				continue;
 			}
-			continue;
-		}
 
-		if (choice.startsWith("Dither mode")) {
-			const picked = await ui.select("Select dither mode", [...DITHER_MODES]);
-			if (picked) {
-				const next = persistSetting(
-					config,
-					agentDir,
-					ui,
-					"dither",
-					picked,
-					(next) => `pi-chafa: dither mode is now ${next.dither}`,
-				);
-				if (next) config = next;
+			if (choice.startsWith("Color mode")) {
+				const picked = await ui.select("Select color mode", [...COLOR_MODES]);
+				if (picked) {
+					const next = persistSetting(
+						config,
+						agentDir,
+						ui,
+						"colors",
+						picked,
+						(next) => `pi-chafa: color mode is now ${next.colors}`,
+					);
+					if (next) config = next;
+				}
+				continue;
 			}
-			continue;
-		}
 
-		if (choice.startsWith("Symbols set")) {
-			const picked = await ui.select("Select symbols set", [...SYMBOL_PRESETS]);
-			if (picked) {
-				const next = persistSetting(
-					config,
-					agentDir,
-					ui,
-					"symbolsSet",
-					picked,
-					(next) => `pi-chafa: symbolsSet is now ${next.symbolsSet}`,
-				);
-				if (next) config = next;
+			if (choice.startsWith("Dither mode")) {
+				const picked = await ui.select("Select dither mode", [...DITHER_MODES]);
+				if (picked) {
+					const next = persistSetting(
+						config,
+						agentDir,
+						ui,
+						"dither",
+						picked,
+						(next) => `pi-chafa: dither mode is now ${next.dither}`,
+					);
+					if (next) config = next;
+				}
+				continue;
 			}
-			continue;
-		}
 
-		if (choice.startsWith("Cell width")) {
-			const picked = await ui.select("Select cell width (columns)", [
-				...WIDTH_PRESETS,
-				"Custom...",
-			]);
-			const value =
-				picked === "Custom..."
-					? await ui.input("Enter custom cellWidth", "positive integer")
-					: picked;
-			if (value) {
-				const next = persistSetting(
-					config,
-					agentDir,
-					ui,
-					"cellWidth",
-					value,
-					(next) => `pi-chafa: cellWidth is now ${next.cellWidth}`,
-				);
-				if (next) config = next;
+			if (choice.startsWith("Symbols set")) {
+				const picked = await ui.select("Select symbols set", [
+					...SYMBOL_PRESETS,
+				]);
+				if (picked) {
+					const next = persistSetting(
+						config,
+						agentDir,
+						ui,
+						"symbolsSet",
+						picked,
+						(next) => `pi-chafa: symbolsSet is now ${next.symbolsSet}`,
+					);
+					if (next) config = next;
+				}
+				continue;
 			}
-			continue;
-		}
 
-		if (choice.startsWith("Max rows")) {
-			const picked = await ui.select("Select max rows (row cap)", [
-				...ROW_PRESETS,
-				"Custom...",
-			]);
-			const value =
-				picked === "Custom..."
-					? await ui.input("Enter custom maxRows", "positive integer")
-					: picked;
-			if (value) {
-				const next = persistSetting(
-					config,
-					agentDir,
-					ui,
-					"maxRows",
-					value,
-					(next) => `pi-chafa: maxRows is now ${next.maxRows}`,
-				);
-				if (next) config = next;
+			if (choice.startsWith("Cell width")) {
+				const picked = await ui.select("Select cell width (columns)", [
+					...WIDTH_PRESETS,
+					"Custom...",
+				]);
+				const value =
+					picked === "Custom..."
+						? await ui.input("Enter custom cellWidth", "positive integer")
+						: picked;
+				if (value) {
+					const next = persistSetting(
+						config,
+						agentDir,
+						ui,
+						"cellWidth",
+						value,
+						(next) => `pi-chafa: cellWidth is now ${next.cellWidth}`,
+					);
+					if (next) config = next;
+				}
+				continue;
 			}
-			continue;
-		}
 
-		if (choice.startsWith("Timeout")) {
-			const picked = await ui.select("Select timeout (ms)", [
-				...TIMEOUT_PRESETS,
-				"Custom...",
-			]);
-			const value =
-				picked === "Custom..."
-					? await ui.input(
-							"Enter custom timeoutMs (milliseconds)",
-							"positive integer ms",
-						)
-					: picked;
-			if (value) {
-				const next = persistSetting(
-					config,
-					agentDir,
-					ui,
-					"timeoutMs",
-					value,
-					(next) => `pi-chafa: timeoutMs is now ${next.timeoutMs}`,
-				);
-				if (next) config = next;
+			if (choice.startsWith("Max rows")) {
+				const picked = await ui.select("Select max rows (row cap)", [
+					...ROW_PRESETS,
+					"Custom...",
+				]);
+				const value =
+					picked === "Custom..."
+						? await ui.input("Enter custom maxRows", "positive integer")
+						: picked;
+				if (value) {
+					const next = persistSetting(
+						config,
+						agentDir,
+						ui,
+						"maxRows",
+						value,
+						(next) => `pi-chafa: maxRows is now ${next.maxRows}`,
+					);
+					if (next) config = next;
+				}
+				continue;
 			}
-			continue;
-		}
 
-		if (choice.startsWith("Binary path")) {
-			const binaryChoices = [
-				"Auto (system PATH)",
-				...(detectedBinary ? [`Detected: ${detectedBinary}`] : []),
-				"Type custom path...",
-			];
-			const picked = await ui.select("Chafa binary path", binaryChoices);
-			if (picked === "Type custom path...") {
-				const val = await ui.input(
-					"Chafa binary path",
-					"absolute path, or empty to clear",
-				);
-				if (val !== undefined) {
+			if (choice.startsWith("Timeout")) {
+				const picked = await ui.select("Select timeout (ms)", [
+					...TIMEOUT_PRESETS,
+					"Custom...",
+				]);
+				const value =
+					picked === "Custom..."
+						? await ui.input(
+								"Enter custom timeoutMs (milliseconds)",
+								"positive integer ms",
+							)
+						: picked;
+				if (value) {
+					const next = persistSetting(
+						config,
+						agentDir,
+						ui,
+						"timeoutMs",
+						value,
+						(next) => `pi-chafa: timeoutMs is now ${next.timeoutMs}`,
+					);
+					if (next) config = next;
+				}
+				continue;
+			}
+
+			if (choice.startsWith("Binary path")) {
+				const binaryChoices = [
+					"Auto (system PATH)",
+					...(detectedBinary ? [`Detected: ${detectedBinary}`] : []),
+					"Type custom path...",
+				];
+				const picked = await ui.select("Chafa binary path", binaryChoices);
+				if (picked === "Type custom path...") {
+					const val = await ui.input(
+						"Chafa binary path",
+						"absolute path, or empty to clear",
+					);
+					if (val !== undefined) {
+						const next = persistSetting(
+							config,
+							agentDir,
+							ui,
+							"binaryPath",
+							val,
+							binaryPathMessage,
+						);
+						if (next) config = next;
+					}
+				} else if (picked?.startsWith("Detected:")) {
+					const pathOnly = picked.replace("Detected: ", "").trim();
 					const next = persistSetting(
 						config,
 						agentDir,
 						ui,
 						"binaryPath",
-						val,
+						pathOnly,
+						binaryPathMessage,
+					);
+					if (next) config = next;
+				} else if (picked === "Auto (system PATH)") {
+					const next = persistSetting(
+						config,
+						agentDir,
+						ui,
+						"binaryPath",
+						"",
 						binaryPathMessage,
 					);
 					if (next) config = next;
 				}
-			} else if (picked?.startsWith("Detected:")) {
-				const pathOnly = picked.replace("Detected: ", "").trim();
-				const next = persistSetting(
-					config,
-					agentDir,
-					ui,
-					"binaryPath",
-					pathOnly,
-					binaryPathMessage,
-				);
-				if (next) config = next;
-			} else if (picked === "Auto (system PATH)") {
-				const next = persistSetting(
-					config,
-					agentDir,
-					ui,
-					"binaryPath",
-					"",
-					binaryPathMessage,
-				);
-				if (next) config = next;
 			}
 		}
 	}
+
+	// print/json: no dialogs, no custom component, no probe — say so.
+	const sink = ctx.mode === "json" ? process.stderr : process.stdout;
+	sink.write(
+		"pi-chafa: /images settings are interactive-only — run '/images status' for the runtime facts\n",
+	);
 }
