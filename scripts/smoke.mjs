@@ -40,6 +40,23 @@ const { probeChafa, buildSymbolsArgs, cleanSymbolsPayload, runChafa } = await im
 const { expandTargets, sniffMime, readBytes } = await import(pathToFileURL(join(DIST, "images.js")).href);
 const { readHostImageSettings, resolveConfig, writeConfigFile } = await import(pathToFileURL(join(DIST, "config.js")).href);
 const { resolveCapsImages, decideDelivery, isTmux, knownNoImageSupport } = await import(pathToFileURL(join(DIST, "detect.js")).href);
+
+// Deterministic capability simulation for the forced-scenario checks below
+// (#044 reworked this seam): pin every ladder rung — host caps, pi settings,
+// and the env protocol — so the outcome does not depend on the terminal the
+// smoke suite happens to run in. The old wholesale capsImages bypass is gone:
+// execute() now composes the real ladder from getCapsImages() + host settings
+// + env, so simulating a terminal means pinning all three.
+const noCapsDeps = () => ({
+	getCapsImages: () => null,
+	readHostImages: () => ({ showImages: true, imageWidthCells: 60, images: null }),
+	env: () => ({}),
+});
+const nativeDeps = () => ({
+	getCapsImages: () => "kitty",
+	readHostImages: () => ({ showImages: true, imageWidthCells: 60, images: null }),
+	env: () => ({}),
+});
 const require = createRequire(join(REPO, "package.json"));
 const { getCapabilities, setCapabilities } = await import(pathToFileURL(require.resolve("@earendil-works/pi-tui")).href);
 
@@ -243,14 +260,14 @@ async function main(work) {
 		check("5a settings snapshot records the invocation", nativeRes.details.settings.format === "auto");
 	}
 
-	// Seam observation (documented, not a defect): an injected capsImages replaces the
-	// ladder wholesale, so unit tests that inject it cannot exercise the ladder via
-	// execute() — only directly via resolveCapsImages().
-	const seamRes = await buildShowImageTool({ capsImages: () => null }).execute("s1b", { path: join(work, "img.png") }, undefined, undefined, ctx);
-	check("5a (seam) injected capsImages bypasses the ladder — expected seam contract", seamRes.details.mode === "symbols", JSON.stringify(seamRes.details.mode));
+	// Seam observation (documented, not a defect): injected rungs replace the ladder's
+	// sources, so unit tests that inject them cannot exercise the real terminal detection
+	// via execute() — only directly via resolveCapsImages().
+	const seamRes = await buildShowImageTool(noCapsDeps()).execute("s1b", { path: join(work, "img.png") }, undefined, undefined, ctx);
+	check("5a (seam) injected no-caps rungs yield symbols — expected seam contract", seamRes.details.mode === "symbols", JSON.stringify(seamRes.details.mode));
 
 	// 5b. Real chafa through execute (auto, no native caps), real payload cleaning.
-	const toolSymbols = buildShowImageTool({ capsImages: () => null });
+	const toolSymbols = buildShowImageTool(noCapsDeps());
 	const symRes = await toolSymbols.execute("s2", { path: join(work, "img.png") }, undefined, undefined, ctx);
 	check("5b symbols mode", symRes.details.mode === "symbols");
 	check("5b real payload stashed in details", (symRes.details.payload ?? "").includes(ESC), `len=${(symRes.details.payload ?? "").length}`);
@@ -259,7 +276,7 @@ async function main(work) {
 	check("5b summary is the plain caption", /^Showed image img\.png to the user as ANSI art\./.test(textOf(symRes)), textOf(symRes));
 
 	// 5c. Forced native on a capable host with images off -> degrade + note.
-	const toolOff = buildShowImageTool({ capsImages: () => "kitty", readHostImages: () => ({ showImages: false, imageWidthCells: 60, images: "kitty" }) });
+	const toolOff = buildShowImageTool({ ...nativeDeps(), readHostImages: () => ({ showImages: false, imageWidthCells: 60, images: "kitty" }) });
 	const degRes = await toolOff.execute("s3", { path: join(work, "img.png"), format: "native" }, undefined, undefined, ctx);
 	check("5c degraded to symbols, no throw", degRes.details.mode === "symbols", JSON.stringify(degRes.details.mode));
 	check("5c degradation note present in model-visible text", /format=native was requested but the host has images off/.test(textOf(degRes)), textOf(degRes));
@@ -279,7 +296,7 @@ async function main(work) {
 	// 5f. Real timeout drill.
 	process.env.CHAFA_TIMEOUT_MS = "1";
 	let timeoutMsg = null;
-	try { await buildShowImageTool({ capsImages: () => null }).execute("s6", { path: join(work, "tall.png") }, undefined, undefined, ctx); } catch (e) { timeoutMsg = e.message; }
+	try { await buildShowImageTool(noCapsDeps()).execute("s6", { path: join(work, "tall.png") }, undefined, undefined, ctx); } catch (e) { timeoutMsg = e.message; }
 	const timeoutAll = timeoutMsg ?? "";
 	check("5f real chafa timeout reported as a timeout", /timed out after 1ms/.test(timeoutAll), timeoutAll.slice(0, 200));
 	check("5f timeout not misreported as an abort", !/abort/i.test(timeoutAll), timeoutAll.slice(0, 120));
@@ -288,12 +305,12 @@ async function main(work) {
 	// 5g. chafa missing from PATH -> actionable install hint.
 	process.env.PATH = "";
 	let missingMsg = null;
-	try { await buildShowImageTool({ capsImages: () => null }).execute("s7", { path: join(work, "img.png") }, undefined, undefined, ctx); } catch (e) { missingMsg = e.message; }
+	try { await buildShowImageTool(noCapsDeps()).execute("s7", { path: join(work, "img.png") }, undefined, undefined, ctx); } catch (e) { missingMsg = e.message; }
 	process.env.PATH = savedEnv.PATH;
 	check("5g missing chafa gives an install hint", /chafa was not found on PATH/.test(missingMsg ?? "") && /install chafa/.test(missingMsg ?? ""), String(missingMsg).slice(0, 160));
 
 	// 5h. No-UI degrade: text only.
-	const headless = await buildShowImageTool({ capsImages: () => "kitty" }).execute("s8", { path: join(work, "img.png") }, undefined, undefined, { cwd: work, hasUI: false });
+	const headless = await buildShowImageTool(nativeDeps()).execute("s8", { path: join(work, "img.png") }, undefined, undefined, { cwd: work, hasUI: false });
 	check("5h no-UI returns text only", headless.content.length === 1 && headless.content[0].type === "text");
 	check("5h no-UI text has no ANSI", !textOf(headless).includes(ESC));
 	check("5h no-UI has no payload in details", headless.details.payload === undefined);
@@ -303,7 +320,7 @@ async function main(work) {
 	// block (spec §7.4, §8). pi persists an image block in session history, so a
 	// host-unrenderable one would be rejected by providers on every later turn.
 	let unknownMsg = null;
-	try { await buildShowImageTool({ capsImages: () => "kitty" }).execute("s9", { path: join(work, "unknown.bin") }, undefined, undefined, ctx); } catch (e) { unknownMsg = e.message; }
+	try { await buildShowImageTool(nativeDeps()).execute("s9", { path: join(work, "unknown.bin") }, undefined, undefined, ctx); } catch (e) { unknownMsg = e.message; }
 	check("5i unknown bytes on native path throw", /not a recognized image format/.test(unknownMsg ?? ""), String(unknownMsg).slice(0, 200));
 	check("5i error names the sniffed mime", /application\/octet-stream/.test(unknownMsg ?? ""), String(unknownMsg).slice(0, 200));
 	check("5i error suggests format=symbols", /format="symbols"/.test(unknownMsg ?? ""), String(unknownMsg).slice(0, 200));
@@ -313,7 +330,7 @@ async function main(work) {
 	// Chafa symbols (auto) or is refused per-file (forced native, missing loader).
 	section("5j. mime-aware delivery (#014/#015)");
 	const SAFE_MIMES = new Set(["image/png", "image/jpeg", "image/gif", "image/webp"]);
-	const nativeTool = buildShowImageTool({ capsImages: () => "kitty" });
+	const nativeTool = buildShowImageTool(nativeDeps());
 	check("5j real loaders parsed", probe.loaders === null || Array.isArray(probe.loaders), JSON.stringify(probe.loaders));
 	check("5j loaders normalized upper-case", probe.loaders === null || probe.loaders.every((l) => l === l.toUpperCase()), JSON.stringify(probe.loaders));
 	for (const [label, file] of [["png", "img.png"], ["jpg", "img.jpg"], ["gif", "img.gif"], ["webp", "img.webp"]]) {
