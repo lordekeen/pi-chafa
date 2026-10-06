@@ -22,6 +22,7 @@ beforeEach(() => {
 afterEach(() => {
 	rmSync(dir, { recursive: true, force: true });
 	for (const key of CHAFA_ENV_KEYS) delete process.env[key];
+	delete process.env.PI_CODING_AGENT_DIR;
 });
 
 describe("loadConfig", () => {
@@ -178,6 +179,26 @@ describe("getConfigDir", () => {
 	it("honors CHAFA_CONFIG_DIR", () => {
 		process.env.CHAFA_CONFIG_DIR = dir;
 		expect(getConfigDir()).toBe(dir);
+	});
+	it("follows the host agent dir via getAgentDir() (#040)", () => {
+		process.env.PI_CODING_AGENT_DIR = dir;
+		expect(getConfigDir()).toBe(dir);
+		expect(getHostAgentDir()).toBe(dir);
+	});
+	it("keeps CHAFA_CONFIG_DIR scoped to the pi-chafa file only (#040)", () => {
+		process.env.PI_CODING_AGENT_DIR = dir;
+		const override = join(dir, "override");
+		process.env.CHAFA_CONFIG_DIR = override;
+		expect(getConfigDir()).toBe(override);
+		expect(getHostAgentDir()).toBe(dir);
+	});
+	it("readHostImageSettings' default agentDir follows the host dir (#040)", () => {
+		process.env.PI_CODING_AGENT_DIR = dir;
+		writeFileSync(
+			join(dir, "settings.json"),
+			JSON.stringify({ terminal: { showImages: false } }),
+		);
+		expect(readHostImageSettings().showImages).toBe(false);
 	});
 });
 

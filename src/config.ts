@@ -5,8 +5,8 @@ import {
 	rmSync,
 	writeFileSync,
 } from "node:fs";
-import { homedir } from "node:os";
 import { join } from "node:path";
+import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import {
 	type ChafaConfig,
 	type ChafaOverrides,
@@ -46,19 +46,20 @@ export const CHAFA_ENV_KEYS = [
 	"CHAFA_CONFIG_DIR",
 ] as const;
 
-/** Where pi-chafa.json lives: CHAFA_CONFIG_DIR override, else ~/.pi/agent (spec §6.2). */
+/** Where pi-chafa.json lives: CHAFA_CONFIG_DIR override, else the host agent dir (§6.2, #040). */
 export function getConfigDir(): string {
 	const override = process.env.CHAFA_CONFIG_DIR;
 	if (override && override.trim() !== "") return override.trim();
-	return join(homedir(), ".pi", "agent");
+	return getAgentDir();
 }
 
 /**
- * pi's own agent dir (~/.pi/agent) — used for pi's settings.json. Ignores
- * CHAFA_CONFIG_DIR, whose override is scoped to pi-chafa.json only (spec §6.2).
+ * pi's own agent dir — used for pi's settings.json. Follows the host accessor
+ * so a relocated agent dir (PI_CODING_AGENT_DIR / CONFIG_DIR_NAME) is honored;
+ * CHAFA_CONFIG_DIR stays scoped to pi-chafa.json only (#040, spec §6.2).
  */
 export function getHostAgentDir(): string {
-	return join(homedir(), ".pi", "agent");
+	return getAgentDir();
 }
 
 function isColorMode(value: unknown): value is ColorsMode {
