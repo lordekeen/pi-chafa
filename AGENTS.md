@@ -43,7 +43,7 @@ The spec is **authoritative, but not frozen**. A change that contradicts the spe
 
 ## Verification Gates
 
-Every pull request or task MUST pass all four checks cleanly before completion:
+Every pull request or task MUST pass all four checks cleanly before completion. These four hermetic gates are enforced in CI (`.github/workflows/ci.yml`, on push to `main` and on pull requests); a fifth optional smoke job runs `npm run test:smoke` against a real `chafa` + ImageMagick on `ubuntu-latest` (#043):
 
 ```bash
 npm run typecheck   # tsc --noEmit (strict TypeScript)

@@ -1,0 +1,43 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  gates:
+    name: Verification gates
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Typecheck
+        run: npm run typecheck
+      - name: Lint
+        run: npm run lint
+      - name: Unit + integration tests
+        run: npm test
+      - name: Build
+        run: npm run build
+
+  smoke:
+    name: Smoke (real chafa + ImageMagick)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Install chafa and ImageMagick
+        run: sudo apt-get update && sudo apt-get install -y chafa imagemagick
+      - name: Smoke run
+        # Exits 0 with a SKIPPED line when either binary is missing, so this
+        # job is safe either way; installing them makes it meaningful (#043).
+        run: npm run test:smoke
