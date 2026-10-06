@@ -50,9 +50,7 @@ export function globToRegExp(pattern: string): RegExp {
 			const isFinal = i === parts.length - 1;
 			if (out !== "" && !out.endsWith("/") && !afterGlobStar) out += "/";
 			// Every segment the double star consumes must itself be non-hidden.
-			out += isFinal
-				? "(?:(?!\\.)[^/]+/)*(?!\\.)[^/]*"
-				: "(?:(?!\\.)[^/]+/)*";
+			out += isFinal ? "(?:(?!\\.)[^/]+/)*(?!\\.)[^/]*" : "(?:(?!\\.)[^/]+/)*";
 			afterGlobStar = !isFinal;
 			continue;
 		}
@@ -196,9 +194,7 @@ export function expandTargets(
 		throw new Error("show_image requires a non-empty path or glob");
 	}
 	const normalized = normalizeTargetPath(target, home);
-	const joined = isAbsolute(normalized)
-		? normalized
-		: resolve(cwd, normalized);
+	const joined = isAbsolute(normalized) ? normalized : resolve(cwd, normalized);
 	const absPattern = posix(joined);
 
 	if (!hasMagic(absPattern)) {

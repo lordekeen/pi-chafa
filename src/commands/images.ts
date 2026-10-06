@@ -23,7 +23,7 @@ import {
 	readHostImageSettings,
 	writeConfigFile,
 } from "../config.js";
-import { isTmux, type ImageEnv, resolveCapsImages } from "../detect.js";
+import { type ImageEnv, isTmux, resolveCapsImages } from "../detect.js";
 import { stripControls } from "../show-image.js";
 import {
 	type AgentCapsImages,
