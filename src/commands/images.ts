@@ -7,7 +7,6 @@ import type {
 import {
 	Container,
 	getCapabilities,
-	getKeybindings,
 	Key,
 	matchesKey,
 	type SettingItem,
@@ -525,7 +524,7 @@ export async function runImagesCommand(
 			const items = buildSettingItems(config, detectedBinary);
 			let currentIndex = 0;
 
-			const result = await ui.custom<WizardAction>((tui, theme, _kb, done) => {
+			const result = await ui.custom<WizardAction>((tui, theme, kb, done) => {
 				const list = new SettingsList(
 					items,
 					Math.min(items.length + 2, 12),
@@ -549,7 +548,7 @@ export async function runImagesCommand(
 				);
 
 				const container = new Container();
-				container.addChild(new Text("⚙  pi-chafa Settings", 1, 0));
+				container.addChild(new Text("pi-chafa Settings", 1, 0));
 				container.addChild(
 					new Text(
 						theme && typeof theme.fg === "function"
@@ -565,19 +564,18 @@ export async function runImagesCommand(
 				container.addChild(new Spacer(1));
 				container.addChild(list);
 
-				const kb = getKeybindings();
-
 				return {
 					render: (w: number) => container.render(w),
 					invalidate: () => container.invalidate(),
 					handleInput: (data: string) => {
-						if (kb.matches(data, "tui.select.up") || matchesKey(data, "up")) {
+						// Single selection owner (#041): the mirror moves ONLY on the
+						// same factory-keybinding predicate the list itself uses, so it
+						// can never drift from the rendered highlight under remapped
+						// keybindings (the old raw-arrow fallback did).
+						if (kb.matches(data, "tui.select.up")) {
 							currentIndex =
 								currentIndex === 0 ? items.length - 1 : currentIndex - 1;
-						} else if (
-							kb.matches(data, "tui.select.down") ||
-							matchesKey(data, "down")
-						) {
+						} else if (kb.matches(data, "tui.select.down")) {
 							currentIndex =
 								currentIndex === items.length - 1 ? 0 : currentIndex + 1;
 						}
@@ -588,6 +586,8 @@ export async function runImagesCommand(
 								kb.matches(data, "tui.select.confirm")) &&
 							currentItem
 						) {
+							// Pseudo-rows (values-less actions) belong to the wrapper;
+							// value rows fall through so the list cycles them.
 							if (currentItem.id === "done") {
 								done({ action: "done" });
 								return;
@@ -598,15 +598,17 @@ export async function runImagesCommand(
 							}
 						}
 
-						// Press 'q' or 'Q' to exit (README documents Esc / q)
-						if (data === "q" || data === "Q") {
+						// 'q'/'Q' exits (README documents Esc / q; #003). Letter keys go
+						// through the host matcher so kitty-protocol input still lands
+						// on them (#041) — a raw compare would never fire for CSI-u.
+						if (matchesKey(data, "q") || matchesKey(data, "shift+q")) {
 							done({ action: "done" });
 							return;
 						}
 
-						// Press 'e' or 'E' to edit editable fields
+						// 'e'/'E' edit editable fields
 						if (
-							(data === "e" || data === "E") &&
+							(matchesKey(data, "e") || matchesKey(data, "shift+e")) &&
 							currentItem &&
 							(currentItem.id === "binaryPath" ||
 								currentItem.id === "cellWidth" ||

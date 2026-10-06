@@ -1,6 +1,12 @@
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import {
+	getKeybindings,
+	KeybindingsManager,
+	setKeybindings,
+	TUI_KEYBINDINGS,
+} from "@earendil-works/pi-tui";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DEFAULT_CONFIG, loadConfig } from "../src/config.js";
 import {
@@ -429,7 +435,7 @@ describe("runImagesCommand", () => {
 				fg: (_c: string, text: string) => text,
 				bold: (text: string) => text,
 			};
-			componentCreated = cb(tui, theme, {}, () => {});
+			componentCreated = cb(tui, theme, getKeybindings(), () => {});
 			return { action: "done" };
 		});
 
@@ -451,6 +457,73 @@ describe("runImagesCommand", () => {
 		expect(typeof componentCreated?.render).toBe("function");
 		const rendered = componentCreated?.render(80);
 		expect(rendered?.join("\n")).toContain("pi-chafa Settings");
+		expect(rendered?.join("\n")).not.toContain("⚙"); // ASCII-safe caption (#041)
+	});
+
+	it("keeps 'e' aligned with the highlight under remapped keys (#041)", async () => {
+		const originalKb = getKeybindings();
+		const remapped = new KeybindingsManager(TUI_KEYBINDINGS, {
+			...originalKb.getResolvedBindings(),
+			"tui.select.up": "ctrl+p",
+			"tui.select.down": "ctrl+n",
+		});
+		setKeybindings(remapped);
+		let resolvePanel: (r: { action: string; id?: string }) => void = () => {};
+		const inputMock = vi.fn();
+		let mounted: { handleInput: (data: string) => void } | undefined;
+		try {
+			const customMock = vi.fn().mockImplementation(async (cb) => {
+				const component = cb(
+					{ requestRender: vi.fn() },
+					{
+						fg: (_c: string, text: string) => text,
+						bold: (text: string) => text,
+					},
+					getKeybindings(),
+					(r: { action: string; id?: string }) => resolvePanel(r),
+				) as { handleInput: (data: string) => void };
+				mounted = component;
+				if (customMock.mock.calls.length === 1) {
+					// Legacy arrows are dead under the remap: the highlight stays on
+					// the first row, so 'e' must NOT open an edit dialog.
+					for (let i = 0; i < 5; i++) component.handleInput("\x1b[B");
+					component.handleInput("e");
+					return new Promise((res) => {
+						resolvePanel = res;
+					});
+				}
+				return { action: "done" };
+			});
+			const run = runImagesCommand(
+				{ getAllTools: () => [] } as never,
+				"",
+				{
+					mode: "tui",
+					hasUI: true,
+					ui: {
+						custom: customMock,
+						select: vi.fn(),
+						notify: vi.fn(),
+						input: inputMock,
+					},
+				} as never,
+			);
+			await vi.waitFor(() => {
+				expect(customMock).toHaveBeenCalledTimes(1);
+			});
+			expect(inputMock).not.toHaveBeenCalled();
+			// Now navigate with the remapped key and 'e' must hit Max rows (row 5).
+			for (let i = 0; i < 5; i++) mounted?.handleInput("\x0e"); // ctrl+n
+			mounted?.handleInput("e");
+			await vi.waitFor(() => {
+				expect(inputMock).toHaveBeenCalledTimes(1);
+			});
+			expect(inputMock.mock.calls[0]?.[0]).toContain("maxRows");
+			resolvePanel({ action: "done" });
+			await run;
+		} finally {
+			setKeybindings(originalKb);
+		}
 	});
 
 	it("prints runtime status for an explicit 'status' argument without opening the panel (#016)", async () => {
@@ -534,7 +607,7 @@ describe("runImagesCommand", () => {
 				fg: (_c: string, text: string) => text,
 				bold: (text: string) => text,
 			};
-			cb(tui, theme, {}, () => {});
+			cb(tui, theme, getKeybindings(), () => {});
 			return { action: "done" };
 		});
 		const ctx = {
@@ -561,7 +634,7 @@ describe("runImagesCommand", () => {
 				fg: (_c: string, text: string) => text,
 				bold: (text: string) => text,
 			};
-			cb(tui, theme, {}, () => {});
+			cb(tui, theme, getKeybindings(), () => {});
 			return { action: "done" };
 		});
 		const ctx = {
@@ -602,7 +675,7 @@ describe("runImagesCommand", () => {
 				const component = cb(
 					tui,
 					theme,
-					{},
+					getKeybindings(),
 					(r: { action: string; id?: string }) => resolveDone(r),
 				) as {
 					handleInput: (data: string) => void;
@@ -651,7 +724,7 @@ describe("runImagesCommand", () => {
 				fg: (_c: string, text: string) => text,
 				bold: (text: string) => text,
 			};
-			const component = cb(tui, theme, {}, doneMock) as {
+			const component = cb(tui, theme, getKeybindings(), doneMock) as {
 				render: (w: number) => string[];
 				handleInput: (data: string) => void;
 			};
@@ -690,7 +763,7 @@ describe("runImagesCommand", () => {
 				fg: (_c: string, text: string) => text,
 				bold: (text: string) => text,
 			};
-			const component = cb(tui, theme, {}, doneMock) as {
+			const component = cb(tui, theme, getKeybindings(), doneMock) as {
 				handleInput: (data: string) => void;
 			};
 			handleInput = component.handleInput;
@@ -725,7 +798,7 @@ describe("runImagesCommand", () => {
 				fg: (_c: string, text: string) => text,
 				bold: (text: string) => text,
 			};
-			const component = cb(tui, theme, {}, doneMock) as {
+			const component = cb(tui, theme, getKeybindings(), doneMock) as {
 				handleInput: (data: string) => void;
 			};
 			handleInput = component.handleInput;
@@ -764,7 +837,7 @@ describe("runImagesCommand", () => {
 				fg: (_c: string, text: string) => text,
 				bold: (text: string) => text,
 			};
-			cb(tui, theme, {}, () => {});
+			cb(tui, theme, getKeybindings(), () => {});
 			if (invocation === 1) {
 				return { action: "input", id: "binaryPath" };
 			}
@@ -891,7 +964,7 @@ describe("runImagesCommand", () => {
 				fg: (_c: string, text: string) => text,
 				bold: (text: string) => text,
 			};
-			cb(tui, theme, {}, () => {});
+			cb(tui, theme, getKeybindings(), () => {});
 			if (invocation === 1) return { action: "input", id: "timeoutMs" };
 			return { action: "done" };
 		});
@@ -933,7 +1006,7 @@ describe("runImagesCommand", () => {
 				fg: (_c: string, text: string) => text,
 				bold: (text: string) => text,
 			};
-			cb(tui, theme, {}, () => {});
+			cb(tui, theme, getKeybindings(), () => {});
 			if (invocation === 1) return { action: "input", id: "timeoutMs" };
 			return { action: "done" };
 		});

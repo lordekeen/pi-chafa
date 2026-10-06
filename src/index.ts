@@ -1,4 +1,5 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type { AutocompleteItem } from "@earendil-works/pi-tui";
 import { runImagesCommand } from "./commands/images.js";
 import { buildShowImageTool } from "./show-image.js";
 
@@ -15,5 +16,9 @@ export default function piChafaExtension(pi: ExtensionAPI): void {
 		description:
 			"Tune pi-chafa defaults and inspect runtime image/terminal status",
 		handler: (args, ctx) => runImagesCommand(pi, args, ctx),
+		// #041: `status` is the only accepted argument; an empty prefix offers it,
+		// any other input matches nothing ([] = no suggestions, host contract).
+		getArgumentCompletions: (prefix: string): AutocompleteItem[] =>
+			prefix.trim() === "" ? [{ value: "status", label: "status" }] : [],
 	});
 }
