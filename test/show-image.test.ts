@@ -1,10 +1,28 @@
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+// #044: count real production reads at the config-module boundary — the only
+// place the three pre-fix reads (resolveConfig default arg, capsImages closure,
+// showImages) are observable, since the tool's injectable seams bypass them.
+const { hostReads } = vi.hoisted(() => ({ hostReads: [] as number[] }));
+
+vi.mock("../src/config.js", async (importOriginal) => {
+	const actual = (await importOriginal()) as typeof import("../src/config.js");
+	return {
+		...actual,
+		readHostImageSettings: () => {
+			hostReads.push(1);
+			// Deterministic hermetic value: no caps from settings; the test forces
+			// the native route via PI_IMAGE_PROTOCOL so no chafa probe is spawned.
+			return { showImages: true, imageWidthCells: 60, images: null };
+		},
+	};
+});
+
 import { cleanSymbolsPayload } from "../src/chafa.js";
 import { DEFAULT_CONFIG } from "../src/config.js";
-import { NATIVE_SAFE_MIMES, type ImageEnv, resolveCapsImages } from "../src/detect.js";
+import { NATIVE_SAFE_MIMES, type ImageEnv } from "../src/detect.js";
 import {
 	buildShowImageTool,
 	summaryText,
@@ -18,6 +36,7 @@ import type {
 	ShowImageDetails,
 	ShowImageFile,
 } from "../src/types.js";
+
 
 // A real, valid 1x1 PNG (red pixel).
 const PNG_BASE64 =
@@ -70,9 +89,12 @@ function makeTool(overrides: {
 	env?: ImageEnv;
 	platform?: string;
 } = {}) {
+	// #044: execute() reads host settings once via readHostImages and computes
+	// the ladder from it — the old standalone capsImages seam is gone. The old
+	// `capsImages` param now feeds the injected host value (default "kitty" =
+	// capable host, matching the pre-#044 default); an explicit hostImages wins.
 	const capsImages = overrides.capsImages === undefined ? "kitty" : overrides.capsImages;
-	const hostImages = overrides.hostImages ?? null;
-	const envProtocol = overrides.envProtocol;
+	const hostImages = overrides.hostImages ?? capsImages;
 	const showImages = overrides.showImages ?? true;
 	const hasUI = overrides.hasUI ?? true;
 	const tool = buildShowImageTool({
@@ -82,9 +104,17 @@ function makeTool(overrides: {
 			imageWidthCells: 60,
 			images: hostImages,
 		}),
-		// The injected seam mirrors defaultDeps: the raw pi-tui read is pushed
-		// through the real fallback ladder against the injected host settings.
-		capsImages: () => resolveCapsImages(capsImages, hostImages, envProtocol),
+		// The caps rung is injectable again (hermetic: the real pi-tui singleton
+		// would reflect the developer's own terminal). legacy capsImages param.
+		getCapsImages: () => capsImages,
+		// envProtocol (legacy param) maps into PI_IMAGE_PROTOCOL so execute's
+		// ladder sees it through the injected env seam.
+		env: () => ({
+			...(overrides.env ?? {}),
+			...(overrides.envProtocol
+				? { PI_IMAGE_PROTOCOL: overrides.envProtocol }
+				: {}),
+		}),
 		expandTargets: (target, cwd) => {
 			const abs = join(cwd, target);
 			if (abs === pngPath) return [abs];
@@ -109,7 +139,6 @@ function makeTool(overrides: {
 		cleanPayload: cleanSymbolsPayload,
 		// Ambient env/platform reach the tool only through the injected seam, so
 		// the forced-native hint is testable without the developer's own terminal.
-		env: () => overrides.env ?? {},
 		platform: () => overrides.platform ?? "linux",
 	});
 	return { tool, ctx: makeCtx(hasUI) };
@@ -564,6 +593,34 @@ describe("show_image execute — capability fallback ladder (headline fix)", () 
 	});
 });
 
+describe("show_image execute — single host-settings read (#044)", () => {
+	it("reads host settings exactly once across config, ladder and delivery", async () => {
+		const prevProtocol = process.env.PI_IMAGE_PROTOCOL;
+		process.env.PI_IMAGE_PROTOCOL = "kitty";
+		hostReads.length = 0;
+		try {
+			// Real deps on the native path: PNG is natively safe, so the chafa
+			// probe stays lazy and never spawns (hermetic #019 rule holds).
+			const tool = buildShowImageTool();
+			const result = await tool.execute(
+				"t-single-read",
+				{ path: pngPath },
+				neverAbort(),
+				noop as never,
+				{ hasUI: true, cwd: dir, ui: {} } as never,
+			);
+			expect((result.details as ShowImageDetails).mode).toBe("native");
+			expect(hostReads).toHaveLength(1);
+		} finally {
+			if (prevProtocol === undefined) {
+				delete process.env.PI_IMAGE_PROTOCOL;
+			} else {
+				process.env.PI_IMAGE_PROTOCOL = prevProtocol;
+			}
+		}
+	});
+});
+
 describe("show_image execute — forced native with images off degrades with a note (spec §7.2 row 3)", () => {
 	it("delivers symbols, no throw, and surfaces the degradation note in the summary", async () => {
 		const { tool, ctx } = makeTool({ capsImages: "kitty", showImages: false });
@@ -625,7 +682,7 @@ describe("show_image execute — multi-image symbols output (#005)", () => {
 				imageWidthCells: 60,
 				images: null,
 			}),
-			capsImages: () => null,
+			getCapsImages: () => null,
 			expandTargets: () => paths,
 			readBytes: async () => Buffer.from(PNG_BASE64, "base64"),
 			sniffMime: () => "image/png",

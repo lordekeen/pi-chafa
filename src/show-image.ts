@@ -90,9 +90,15 @@ export type ShowImageParams = Static<typeof showImageParams>;
 
 /** Injectable seams so execute() is testable without a terminal, chafa, or config file (spec §5.3). */
 export interface ShowImageDeps {
-	resolveConfig: (overrides: ChafaOverrides) => ResolvedConfig;
+	resolveConfig: (
+		overrides: ChafaOverrides,
+		agentDir?: string,
+		hostSettings?: HostImageSettings,
+	) => ResolvedConfig;
+	/** Host settings source; execute() reads it exactly once per call (#044). */
 	readHostImages: () => HostImageSettings;
-	capsImages: () => AgentCapsImages;
+	/** First rung of the §6.4 ladder: the host's pi-tui capability singleton. */
+	getCapsImages: () => AgentCapsImages;
 	expandTargets: (target: string, cwd: string) => string[];
 	readBytes: (filePath: string) => Promise<Buffer>;
 	sniffMime: (bytes: Buffer) => string;
@@ -123,19 +129,11 @@ function defaultDeps(): ShowImageDeps {
 	return {
 		resolveConfig,
 		readHostImages: readHostImageSettings,
-		// Instance-independent capability ladder (spec §7.1 step 3): the host's
-		// pi-tui `getCapabilities()` is preferred, then pi's own `terminal.images`
-		// setting, then `PI_IMAGE_PROTOCOL`. This keeps the default native path
-		// reachable when pi-chafa binds its own pi-tui instance and never receives
-		// the host's `setCapabilityOverrides()`.
-		capsImages: () =>
-			resolveCapsImages(
-				getCapabilities().images,
-				readHostImageSettings().images,
-				readEnv().PI_IMAGE_PROTOCOL,
-				readEnv(),
-				readPlatform(),
-			),
+		getCapsImages: () => getCapabilities().images,
+		// The spec §6.4 ladder (getCapabilities() → terminal.images →
+		// PI_IMAGE_PROTOCOL) is computed in execute() from the single injectable
+		// host-settings read + the injectable caps rung + env + platform (#044);
+		// there is no host-settings read inside the ladder itself.
 		env: readEnv,
 		platform: readPlatform,
 		expandTargets,
@@ -405,6 +403,11 @@ export function buildShowImageTool(
 			const target = (hasPath ? params.path : params.glob) as string;
 			const cwd = ctx.cwd ?? process.cwd();
 
+			// Single host-settings read for the whole execute (#044): config's
+			// imageWidthCells rung, the §6.4 ladder, and the delivery decision all
+			// consume this one value (per-call freshness, no module cache).
+			const hostImages = d.readHostImages();
+
 			// Step 1 — resolve inputs (spec §7.1). expandTargets throws for a
 			// directory target and for a zero-match glob; a missing literal
 			// path expands to [] and is reported here (spec §8).
@@ -423,7 +426,7 @@ export function buildShowImageTool(
 					ok: true,
 					mode: "none",
 				}));
-				const resolved = d.resolveConfig({});
+				const resolved = d.resolveConfig({}, undefined, hostImages);
 				return {
 					content: [{ type: "text", text: summaryText(files, "none") }],
 					details: {
@@ -442,7 +445,7 @@ export function buildShowImageTool(
 				symbolsSet: params.symbolsSet,
 				dither: params.dither,
 			};
-			const resolved = d.resolveConfig(overrides);
+			const resolved = d.resolveConfig(overrides, undefined, hostImages);
 
 			// Live width clamp for the symbols path (spec §7.3, #011). chafa runs
 			// during execute, so this is the last point where the viewport is known;
@@ -464,16 +467,26 @@ export function buildShowImageTool(
 				cellWidth: effectiveWidth,
 			};
 
-			// Step 3 — capability decision (spec §5.1, §7.2). decideDelivery
+			// Step 3 — capability decision (spec §5.1, §7.2): the §6.4 ladder
+			// (getCapabilities() → terminal.images → PI_IMAGE_PROTOCOL) computed
+			// from the single host-settings read above (#044). decideDelivery
 			// throws for a forced format=native this session cannot render; the
 			// real env/platform word that error's fix hint for tmux (#030).
+			const env = d.env();
+			const platform = d.platform();
 			const mode: DeliveryMode = decideDelivery({
-				capsImages: d.capsImages(),
-				showImages: d.readHostImages().showImages,
+				capsImages: resolveCapsImages(
+					d.getCapsImages(),
+					hostImages.images,
+					env.PI_IMAGE_PROTOCOL,
+					env,
+					platform,
+				),
+				showImages: hostImages.showImages,
 				preferNative: resolved.preferNative,
 				format: overrides.format ?? "auto",
-				env: d.env(),
-				platform: d.platform(),
+				env,
+				platform,
 			});
 			// Forced format=native on a capable host with images off degrades to
 			// symbols (decideDelivery); record that so the note is not silent.
