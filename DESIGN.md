@@ -1,6 +1,6 @@
 # DESIGN.md — pi-chafa Architecture & Decisions
 
-High-level engineering design and technical rationale for `pi-chafa`. For the formal specification, see [`docs/spec/2026-09-03-pi-chafa-extension-design.md`](docs/spec/2026-09-03-pi-chafa-extension-design.md).
+High-level engineering design and technical rationale for `pi-chafa`. The formal specification is maintained locally in `docs/` (a local-only tree that is deliberately never published, and absent from this repository's history); this file is the published design contract, and [`AGENTS.md`](AGENTS.md) carries the rules that must not be violated.
 
 ## 1. Objective
 
@@ -89,6 +89,6 @@ Determines whether each target is rendered natively, converted to symbols, or de
 
 ## 6. Deferred & Future Scope
 
-- **Upstream Sixel Support:** Sixel rendering is deferred pending host TUI architecture updates (see [`docs/spec/2026-09-03-pi-tui-sixel-support-proposal.md`](docs/spec/2026-09-03-pi-tui-sixel-support-proposal.md)).
+- **Upstream Sixel Support:** Sixel rendering is deferred pending host TUI architecture updates; pi-tui exposes no sixel path today.
 - **Dynamic Terminal Width Clamping:** Symbols output currently relies on configured `cellWidth` (default: 60) rather than dynamic terminal column queries.
 - **WASM Fallback:** Embedded WebAssembly fallback for systems lacking native `chafa` packages.

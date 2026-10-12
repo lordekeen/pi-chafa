@@ -11,7 +11,7 @@ Project context and rules for AI agents working in this repository. Read this be
 
 ## Spec conflict rule
 
-The spec is **authoritative, but not frozen**. A change that contradicts the spec must amend the spec in the *same* change; never silently override it. The plan or task that ships the behavior carries the spec edit, so the tree never contains a behavior the spec denies (see "Spec wins in any conflict" in the Files & Architecture table).
+The spec is **authoritative, but not frozen**. A change that contradicts the spec must amend the spec in the *same* change; never silently override it. The plan or task that ships the behavior carries the spec edit, so the tree never contains a behavior the spec denies (see "Spec wins in any conflict" in the Files & Architecture table). The spec itself lives in the local-only `docs/` tree (see below), so for anyone outside that tree the published contract is this file plus [`DESIGN.md`](DESIGN.md).
 
 ## Non-negotiable invariants
 
@@ -22,7 +22,7 @@ The spec is **authoritative, but not frozen**. A change that contradicts the spe
    - Cursor toggle sequences must be cleanly stripped via [`cleanSymbolsPayload`](src/chafa.ts).
    - User paths and labels must be sanitized with [`stripControls`](src/show-image.ts) to prevent ANSI/control-character injection into the TUI.
 4. **Clean abort handling:** When an execution abort occurs via `AbortSignal`, it must be recognized as a user cancellation and thrown, never reported as a misleading timeout or swallowed as a per-file failure.
-5. **No native runtime dependencies:** Runtime dependencies rely on pi's peer packages (`@earendil-works/pi-*` plus `typebox`, a pi core package) and Node built-ins (`node:fs`, `node:path`, `node:child_process`). `typebox` is imported at runtime by `src/show-image.ts` and must stay declared in `peerDependencies` (it is also a devDependency for local builds). `chafa` is an external binary on `PATH`.
+5. **No native runtime dependencies:** Runtime dependencies rely on pi's peer packages (`@earendil-works/pi-coding-agent`, `@earendil-works/pi-tui`, plus `typebox`, a pi core package) and Node built-ins (`node:fs`, `node:path`, `node:child_process`). Do not add a peer for `@earendil-works/pi-ai`: pi-chafa never imports it — pi-coding-agent pulls it in itself. `typebox` is imported at runtime by `src/show-image.ts` and must stay declared in `peerDependencies` (it is also a devDependency for local builds). `chafa` is an external binary on `PATH`.
 6. **Precedence ladder:** Tool call parameters > `CHAFA_*` environment variables > `~/.pi/agent/pi-chafa.json` config > defaults.
 
 ## Files & Architecture
@@ -39,7 +39,12 @@ The spec is **authoritative, but not frozen**. A change that contradicts the spe
 | [`src/commands/images.ts`](src/commands/images.ts) | `/images` slash command panel, terminal capability inspector, and interactive settings menu. |
 | [`skills/pi-chafa/SKILL.md`](skills/pi-chafa/SKILL.md) | Bundled skill auto-discovered by pi, guiding models on when to call `show_image`. |
 | [`scripts/smoke.mjs`](scripts/smoke.mjs) | Opt-in real-dependency smoke runner (`npm run test:smoke`): builds `dist/` then drives it against the real chafa binary, the real filesystem, and the real capability ladder. Not published — `scripts/` is outside the `files` allowlist. |
-| [`docs/spec/2026-09-03-pi-chafa-extension-design.md`](docs/spec/2026-09-03-pi-chafa-extension-design.md) | Authoritative design specification. Spec wins in any conflict — amend it in the same change (see "Spec conflict rule" above). |
+| [`.github/workflows/ci.yml`](.github/workflows/ci.yml) | The four hermetic gates on push and pull requests, plus the optional smoke job against a real chafa + ImageMagick (#043). |
+| [`.github/workflows/release-please.yml`](.github/workflows/release-please.yml) | Release automation: release-please maintains the release PR (semver bump + `CHANGELOG.md`), and each created release **stages** the package on npm. |
+| [`.github/workflows/publish-manual.yml`](.github/workflows/publish-manual.yml) | Manual/emergency staging run of the current `main` state. |
+| [`release-please-config.json`](release-please-config.json), [`.release-please-manifest.json`](.release-please-manifest.json) | Release-please manifest-mode config, and the anchor holding the last published version. |
+| [`CHANGELOG.md`](CHANGELOG.md) | Release notes, written by release-please from Conventional Commits — never edited by hand. |
+| `docs/` (local-only, gitignored) | The maintainer's working tree: the authoritative design specification (`docs/spec/*.md`), the issue tracker, plans, and handoffs. Deliberately absent from this repository and its history, so nothing in it is published. |
 
 ## Verification Gates
 
@@ -61,6 +66,18 @@ npm run test:smoke  # builds dist/ and drives the built artifact against the rea
 ```
 
 It requires `chafa` (≥ 1.10.0) and ImageMagick on `PATH`, and **skips cleanly with exit 0** when either is missing.
+
+## Release & Publishing
+
+Published as **`@lordekeen/pi-chafa`** with `publishConfig.access: "public"`.
+
+- **The shipped entry is `./src/index.ts`; pi's own loader transpiles it.** `dist/` is a *build verification artifact* only — it feeds the fourth gate and the smoke runner, and is never published: `package.json` declares no `main`/`types` and does not list `dist/` in `files`.
+- `assets/pi-chafa.png` is the screenshot the README hero and the package's `pi.image` (pi.dev gallery card) point at. It must exist in the repository before a release is tagged.
+- Releases are cut by [release-please](.github/workflows/release-please.yml) from Conventional Commits. It maintains a release PR carrying the semver bump and the `CHANGELOG.md` entry; creating the GitHub release runs the publish job, which **stages** that version on npm with `npm stage publish`.
+- Staging never prompts for 2FA; a maintainer approves it with `npm stage approve <stage-id>` (or the Staged Packages tab on npmjs.com), and only then does the version go live. Until approval the version is **not installable** — `npm view @lordekeen/pi-chafa version` still reports the previous one.
+- Publish jobs run on **Node 24**, not as a preference: `npm stage publish` needs npm CLI ≥ 11.15.0 and Node 22 still bundles npm 10.x.
+- Requires the `NPM_TOKEN` repository secret — a staging-capable granular token.
+- **The first-ever publish is the exception that proves the rule.** A package that does not exist on the registry cannot be staged, so the initial `0.2.0` is published locally and manually (`npm publish --access public`) and then anchored with a baseline `v0.2.0` GitHub release and tag. That anchor is what keeps release-please counting commits from the published version instead of replaying all of history into one giant release — so **push the baseline tag together with the release-prep commit**, letting no release-please run see `main` without it. Details and the recovery steps live in [`CONTRIBUTING.md`](CONTRIBUTING.md).
 
 ## Conventions
 

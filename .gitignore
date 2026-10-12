@@ -6,3 +6,6 @@ dist/
 *.log
 .pi/
 .vitest/
+
+# Local-only development trees (spec, issue tracker, plans, handoffs) — never published
+docs/
