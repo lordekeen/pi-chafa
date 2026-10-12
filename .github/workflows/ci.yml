@@ -1,3 +1,10 @@
+# The four hermetic verification gates from AGENTS.md (#043), plus an opt-in
+# smoke job that exercises the real chafa binary and ImageMagick. The smoke
+# runner exits 0 with a SKIPPED line when either tool is missing, so installing
+# them is what makes the job meaningful rather than merely safe.
+#
+# Security: actions pinned to full commit SHAs, least-privilege permissions, and
+# checkout drops the GitHub credentials (nothing in this workflow pushes).
 name: ci
 
 on:
@@ -5,15 +12,21 @@ on:
     branches: [main]
   pull_request:
 
+permissions:
+  contents: read
+
 jobs:
   gates:
     name: Verification gates
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
-          node-version: 22
+          persist-credentials: false
+      # pi-lens-ignore: line-length
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version: 24
           cache: npm
       - run: npm ci
       - name: Typecheck
@@ -29,15 +42,16 @@ jobs:
     name: Smoke (real chafa + ImageMagick)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
-          node-version: 22
+          persist-credentials: false
+      # pi-lens-ignore: line-length
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version: 24
           cache: npm
       - run: npm ci
       - name: Install chafa and ImageMagick
         run: sudo apt-get update && sudo apt-get install -y chafa imagemagick
       - name: Smoke run
-        # Exits 0 with a SKIPPED line when either binary is missing, so this
-        # job is safe either way; installing them makes it meaningful (#043).
         run: npm run test:smoke
