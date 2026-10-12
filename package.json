@@ -1,13 +1,45 @@
 {
-  "name": "pi-chafa",
+  "name": "@lordekeen/pi-chafa",
   "version": "0.2.0",
   "description": "Show image files to the user in the pi terminal — native kitty/iTerm2 where supported, Chafa ANSI symbols everywhere else.",
-  "keywords": ["pi", "pi-extension", "pi-package", "chafa", "terminal-image"],
+  "keywords": [
+    "pi",
+    "pi-package",
+    "pi-extension",
+    "chafa",
+    "terminal-image",
+    "kitty-graphics",
+    "iterm2",
+    "ansi-art"
+  ],
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/lordekeen/pi-chafa.git"
+  },
+  "homepage": "https://github.com/lordekeen/pi-chafa#readme",
+  "bugs": "https://github.com/lordekeen/pi-chafa/issues",
+  "publishConfig": {
+    "access": "public"
+  },
   "type": "module",
-  "main": "dist/index.js",
-  "types": "dist/index.d.ts",
-  "files": ["dist/", "src/", "skills/", "README.md", "LICENSE", "pi-chafa.example.json"],
+  "files": [
+    "src/",
+    "skills/",
+    "assets/",
+    "pi-chafa.example.json",
+    "CHANGELOG.md",
+    "README.md",
+    "LICENSE"
+  ],
+  "pi": {
+    "extensions": ["./src/index.ts"],
+    "skills": ["./skills"],
+    "image": "https://raw.githubusercontent.com/lordekeen/pi-chafa/main/assets/pi-chafa.png"
+  },
+  "engines": {
+    "node": ">=22.19.0"
+  },
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc --noEmit",
@@ -20,7 +52,6 @@
   },
   "devDependencies": {
     "@biomejs/biome": "^2.3.5",
-    "@earendil-works/pi-ai": "^0.84.4",
     "@earendil-works/pi-coding-agent": "^1.0.4",
     "@earendil-works/pi-tui": "^1.0.4",
     "@types/node": "^20.0.0",
@@ -29,13 +60,8 @@
     "vitest": "^4.0.18"
   },
   "peerDependencies": {
-    "@earendil-works/pi-ai": "*",
     "@earendil-works/pi-coding-agent": "*",
     "@earendil-works/pi-tui": "*",
     "typebox": "*"
-  },
-  "pi": {
-    "extensions": ["./src/index.ts"],
-    "skills": ["./skills"]
   }
 }
