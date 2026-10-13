@@ -74,6 +74,13 @@ describe("piChafaExtension registration", () => {
 		expect(completions("symbolsSet br").map((c) => c.value)).toEqual([
 			"symbolsSet braille",
 		]);
+		// Extra whitespace between key and value: the handler splits on the first
+		// whitespace run and trims it, so completion must not fall silent on input the
+		// command itself accepts (#063).
+		expect(completions("colors  8").map((c) => c.value)).toEqual(["colors 8"]);
+		expect(completions("colors \t").map((c) => c.value)).toEqual(
+			COLOR_MODES.map((value) => `colors ${value}`),
+		);
 		// Free-form and unknown keys offer nothing rather than a wrong guess.
 		expect(completions("binaryPath ")).toEqual([]);
 		expect(completions("bogus ")).toEqual([]);

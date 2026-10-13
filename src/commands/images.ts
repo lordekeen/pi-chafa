@@ -208,17 +208,56 @@ function editDistanceAtMost(a: string, b: string, max: number): number {
 }
 
 /**
- * The near-miss correction for an unknown `/images` argument (#055): a typo, a
- * prefix, or the accepted token followed by extra text. Returns the accepted
- * token, or undefined when the argument is simply something else — a refusal
- * must not invent a correction, and a two-character prefix is too little to go on.
+ * The known token an argument neighbours: a prefix either way (with a
+ * three-character minimum, so a two-letter stub guesses nothing), or within two
+ * edits.
  */
-export function nearMiss(rawArg: string, known = "status"): string | undefined {
-	const arg = rawArg.trim().toLowerCase();
-	if (!arg || arg === known) return undefined;
-	if (arg.startsWith(known)) return known;
-	if (known.startsWith(arg) && arg.length >= 3) return known;
-	return editDistanceAtMost(arg, known, 2) <= 2 ? known : undefined;
+function tokenNeighbour(
+	arg: string,
+	known: readonly string[],
+): string | undefined {
+	for (const token of known) {
+		const lower = token.toLowerCase();
+		if (arg.startsWith(lower)) return token;
+		if (lower.startsWith(arg) && arg.length >= 3) return token;
+	}
+	for (const token of known) {
+		if (editDistanceAtMost(arg, token.toLowerCase(), 2) <= 2) return token;
+	}
+	return undefined;
+}
+
+/**
+ * The near-miss correction for an unknown `/images` argument (#055, #063): a typo, a
+ * prefix, or an accepted token followed by extra text. The argument as a whole is
+ * tried first (`statu` → `status`, `statuses` → `status`); failing that, its first
+ * token is corrected against the settings keys while the rest of the argument is
+ * carried over exactly as the user typed it (`colour FULL` → `colors FULL`) — keys
+ * match case-insensitively, but enum values are case-sensitive, so lowercasing the
+ * value would suggest something the parser then refuses. Returns undefined when
+ * there is nothing to suggest: a refusal must not invent a correction, and since
+ * `status` takes no value, `statu 8` stays uncorrected rather than becoming a form
+ * the grammar rejects.
+ */
+export function nearMiss(
+	rawArg: string,
+	known: readonly string[] = ["status", ...SETTING_KEYS],
+): string | undefined {
+	const arg = rawArg.trim();
+	const lower = arg.toLowerCase();
+	if (!lower || known.some((token) => token.toLowerCase() === lower)) {
+		return undefined;
+	}
+	const at = arg.search(/\s/);
+	// No whitespace: the whole argument is the user's attempt at one token, so any
+	// known token may correct it (`statu`, `statuses` → status; `colour` → colors).
+	if (at === -1) return tokenNeighbour(lower, known);
+	// With a value after it, only a setting key can be the miss — and the value is
+	// carried over exactly as typed. `status` takes no value, so a corrected `status`
+	// plus one would suggest a form the grammar rejects: silence is better.
+	const head = tokenNeighbour(lower.slice(0, at), known);
+	if (!head || head.toLowerCase() === "status") return undefined;
+	return `${head}${arg.slice(at)}`;
 }
 
 /**

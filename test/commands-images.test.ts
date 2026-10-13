@@ -533,6 +533,22 @@ describe("nearMiss (#055)", () => {
 		expect(nearMiss("status")).toBeUndefined(); // not a miss at all
 		expect(nearMiss("")).toBeUndefined();
 	});
+
+	it("corrects a mistyped setting key and keeps the value as typed (#063)", () => {
+		// The grammar is `status | <key> <value>`, so the first token is the common
+		// miss — and the warning already lists the keys, so the suggestion has to know
+		// them too. The value survives verbatim: keys match case-insensitively, but
+		// enum values are case-sensitive, so lowercasing them would suggest a value the
+		// parser would then refuse.
+		expect(nearMiss("colour 8")).toBe("colors 8");
+		expect(nearMiss("cellwidth 72")).toBe("cellWidth 72");
+		expect(nearMiss("colour FULL")).toBe("colors FULL");
+		expect(nearMiss("colour")).toBe("colors"); // no value yet: correct the key alone
+		// `status` takes no value, so a corrected head plus a value is not a suggestion
+		// worth making — better silent than wrong.
+		expect(nearMiss("statu 8")).toBeUndefined();
+		expect(nearMiss("bogus 8")).toBeUndefined();
+	});
 });
 
 describe("runtimeStatusSubmenu (#049)", () => {

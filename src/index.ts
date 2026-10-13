@@ -34,7 +34,13 @@ function completeImagesArgument(prefix: string): AutocompleteItem[] {
 	}
 	const canonical = resolveSettingKey(text.slice(0, at));
 	if (!canonical) return [];
-	const typed = text.slice(at + 1).toLowerCase();
+	// Trim like the parser does (splitSettingArg): the host forwards the argument
+	// text verbatim, so `colors  8` (an extra space, a pasted tab) would otherwise
+	// complete to nothing even though the command accepts it (#063).
+	const typed = text
+		.slice(at + 1)
+		.trim()
+		.toLowerCase();
 	return (SETTING_ARG_VALUES[canonical] ?? [])
 		.filter((value) => value.toLowerCase().startsWith(typed))
 		.map((value) => ({ value: `${canonical} ${value}`, label: value }));
