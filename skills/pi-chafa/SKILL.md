@@ -1,6 +1,13 @@
 ---
 name: pi-chafa
-description: Display image files to the user in the terminal with the show_image tool. Use whenever the user asks to see, show, display, preview, or open a picture, screenshot, plot, chart, icon, or diagram ("show me", "what does it look like", "let me see it"), and proactively after you or a command generate an image the user should review, or when an image would help them make a decision. Presentation only: it does not let you see or interpret image contents.
+description: >-
+  Display image files to the user in the terminal with the show_image tool.
+  Use whenever the user asks to see, show, display, preview, or open a
+  picture, screenshot, plot, chart, icon, or diagram (for example "show me",
+  "what does it look like", "let me see it"), and proactively after you or a
+  command generate an image the user should review, or when an image would
+  help them make a decision. Presentation only, it does not let you see or
+  interpret image contents.
 ---
 
 # pi-chafa: showing images to the user
