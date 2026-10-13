@@ -73,7 +73,9 @@ export const SETTING_DESCRIPTIONS = {
 		"Chafa binary executable. Enter/Space toggles auto/path · Press 'e' to edit custom path.",
 	runtimeStatus:
 		"Inspect detected image protocols, host showImages setting, and chafa version.",
-	done: "Save and close (Ctrl+S)", // #047: the row is the second confirm, same as the chord
+	// The RPC/`select` fallback still offers a "Done" menu entry — a dialog option,
+	// not the synthetic row the panel used to carry (#054 removed that one).
+	done: "Close the settings panel",
 } as const;
 
 /** Which source supplied the effective image capability (spec §6.4 ladder). */
@@ -270,12 +272,6 @@ export function buildSettingItems(
 			label: "Runtime status",
 			description: SETTING_DESCRIPTIONS.runtimeStatus,
 			currentValue: "view",
-		},
-		{
-			id: "done",
-			label: "Done",
-			description: SETTING_DESCRIPTIONS.done,
-			currentValue: "exit",
 		},
 	];
 }
@@ -545,8 +541,8 @@ export async function runImagesCommand(
 		// #045 staged persistence: the host SettingsList frame promises "Esc to
 		// cancel" (its hint line is fixed), so no edit may reach the file before
 		// an explicit confirm. `base` = the file state at panel open; `draft`
-		// accumulates edits; Ctrl+S and the Done row (#047) are the only writers;
-		// Esc discards. The fallback select flow keeps its per-step persistence
+		// accumulates edits; Ctrl+S is the only writer (the synthetic Done row was
+		// removed, #054, superseding #047); Esc discards. The fallback select flow keeps its per-step persistence
 		// (dialog frames promise nothing — honest as-is).
 		const base = config;
 		let draft = config;
@@ -647,13 +643,8 @@ export async function runImagesCommand(
 							currentItem
 						) {
 							// Pseudo-rows (values-less actions) belong to the wrapper;
-							// value rows fall through so the list cycles them. The Done
-							// row is the second confirm — identical to Ctrl+S (#047) —
-							// so the two cannot drift.
-							if (currentItem.id === "done") {
-								saveAndClose();
-								return;
-							}
+							// value rows fall through so the list cycles them. Saving is not a
+							// row at all: Ctrl+S is the only confirm (#054).
 							if (currentItem.id === "runtimeStatus") {
 								done({ action: "status" });
 								return;

@@ -64,7 +64,6 @@ describe("SETTING_DESCRIPTIONS", () => {
 			"timeoutMs",
 			"binaryPath",
 			"runtimeStatus",
-			"done",
 		] as const;
 		for (const key of expectedKeys) {
 			expect(SETTING_DESCRIPTIONS[key]).toBeDefined();
@@ -96,7 +95,6 @@ describe("buildSettingItems", () => {
 			"timeoutMs",
 			"binaryPath",
 			"runtimeStatus",
-			"done",
 		]);
 
 		const preferNativeItem = items.find((i) => i.id === "preferNative")!;
@@ -1186,44 +1184,27 @@ describe("runImagesCommand", () => {
 		await run;
 	});
 
-	it("the Done row saves and closes when dirty, like Ctrl+S (#047)", async () => {
-		const realWrite = writeConfigFile;
-		const writeSpy = vi.fn((dir: string, cfg: unknown) => realWrite(dir, cfg as ChafaConfig));
-		let panel: { handleInput: (d: string) => void } | undefined;
-		const { run, notifyMock } = await mountPanel({
-			deps: { writeConfigFile: writeSpy },
-			simulate: (c, mount) => {
-				if (mount === 1) {
-					panel = c;
-					c.handleInput("\r"); // dirty: Prefer native → false
-					for (let i = 0; i < 9; i++) c.handleInput("\x1b[B");
-					c.handleInput("\r"); // Enter on the Done row
-				}
-			},
-		});
-		await run;
-		expect(writeSpy).toHaveBeenCalledTimes(1);
-		expect(loadConfig(testDir).preferNative).toBe(false);
-		expect(notifyMock).toHaveBeenCalledWith(
-			`pi-chafa: 1 setting saved to ${testDir}/pi-chafa.json`,
-			"info",
-		);
-		expect(panel).toBeDefined();
-	});
-
-	it("the Done row closes without writing when clean (#047)", async () => {
+	it("saves only through Ctrl+S — Enter on a value row never writes (#054)", async () => {
 		const realWrite = writeConfigFile;
 		const writeSpy = vi.fn((dir: string, cfg: unknown) => realWrite(dir, cfg as ChafaConfig));
 		const { run, notifyMock } = await mountPanel({
 			deps: { writeConfigFile: writeSpy },
 			simulate: (c) => {
-				for (let i = 0; i < 9; i++) c.handleInput("\x1b[B");
+				c.handleInput("\x1b[B"); // down to Color mode
+				c.handleInput("\r"); // cycle: the draft is dirty
+				c.handleInput("\r"); // Enter must keep cycling, never save
 				c.handleInput("\r");
+				expect(writeSpy).not.toHaveBeenCalled();
+				c.handleInput("\x13"); // Ctrl+S is the only confirm
 			},
 		});
 		await run;
-		expect(writeSpy).not.toHaveBeenCalled();
-		expect(notifyMock).toHaveBeenCalledWith("pi-chafa: settings unchanged", "info");
+		expect(writeSpy).toHaveBeenCalledTimes(1);
+		expect(loadConfig(testDir).colors).not.toBe("240");
+		expect(notifyMock).toHaveBeenCalledWith(
+			`pi-chafa: 1 setting saved to ${testDir}/pi-chafa.json`,
+			"info",
+		);
 	});
 
 	it("a failed write warns, keeps the draft, and leaves the panel open (#045)", async () => {
