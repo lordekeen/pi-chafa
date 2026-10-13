@@ -545,8 +545,11 @@ describe("runtimeStatusSubmenu (#049)", () => {
 	});
 
 	it("closes itself on cancel, Enter, Space and q", () => {
-		// The list routes EVERY key to an open submenu and never sees it again, so a
-		// submenu that does not close itself is a dead end.
+		// An open submenu receives every key the wrapper does not claim for itself
+		// (Ctrl+S and `e`), so a submenu that does not close itself is a dead end. `q`
+		// belongs on this list because the wrapper delegates it WHILE a submenu is open
+		// (#062) — otherwise the wrapper's own q branch would swallow it and discard the
+		// draft, contradicting #048's "q is an exact alias of Esc".
 		for (const key of ["\x1b", "\r", " ", "q"]) {
 			const close = vi.fn();
 			runtimeStatusSubmenu(LINES, getKeybindings(), close).handleInput?.(key);
@@ -2025,7 +2028,40 @@ describe("runImagesCommand", () => {
 		);
 	});
 
-	it("Ctrl+S writes the draft exactly once and reports the count and file (#045)", async () => {
+		it("makes q an exact Esc alias while the facts submenu is open (#062)", async () => {
+		// The wrapper intercepts q before the list sees it, so with a submenu open q
+		// discarded the whole draft while Esc closed only the submenu — contradicting
+		// #048's "q is an exact alias of Esc". The host exposes no accessor for an open
+		// submenu (`SettingsList.submenuComponent` is private), but the wrapper supplies
+		// the submenu's factory AND its close callback, so it can track that state.
+		let submenuRender: string[] = [];
+		let afterQ: string[] = [];
+		const { run, notifyMock } = await mountPanel({
+			simulate: (c, mount) => {
+				if (mount !== 1) return;
+				for (let i = 0; i < 8; i++) c.handleInput("\x1b[B"); // → Runtime status
+				c.handleInput("\r"); // open the facts submenu
+				submenuRender = c.render(80);
+				c.handleInput("q"); // q: the submenu's own branch closes it
+				afterQ = c.render(80);
+				c.handleInput("q"); // q again, no submenu: the panel cancels
+			},
+		});
+		await run;
+
+		// The submenu really was open: its lines replace the rows.
+		expect(submenuRender.join("\n")).toContain("Detected image protocol: ");
+		expect(submenuRender.join("\n")).not.toContain("Prefer native");
+		// q closed only the submenu — the panel is still there with its rows.
+		expect(afterQ.join("\n")).toContain("Prefer native");
+		// And the second q is the reported cancel (#048), never a silent discard.
+		expect(notifyMock).toHaveBeenCalledWith(
+			"pi-chafa: settings unchanged (cancelled)",
+			"info",
+		);
+	});
+
+it("Ctrl+S writes the draft exactly once and reports the count and file (#045)", async () => {
 		const realWrite = writeConfigFile;
 		const writeSpy = vi.fn((dir: string, cfg: unknown) => realWrite(dir, cfg as ChafaConfig));
 		const { run, notifyMock } = await mountPanel({

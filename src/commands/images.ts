@@ -925,6 +925,11 @@ export async function runImagesCommand(
 		// What the FILE holds (not the resolved config): a save writes these values back
 		// plus the draft's changed keys (D25, #058). Captured at open, like `base`.
 		const fileBase = fileValues;
+		// Whether the host is showing a submenu over the rows (#062). The host exposes no
+		// accessor for it (`SettingsList.submenuComponent` is private), but the wrapper
+		// supplies the submenu's factory AND its close callback, so it knows: opened
+		// there, closed there.
+		let submenuOpen = false;
 		let draft = config;
 		for (;;) {
 			const result = await ui.custom<WizardAction>((tui, theme, kb, done) => {
@@ -933,8 +938,13 @@ export async function runImagesCommand(
 				const items = buildSettingItems(
 					draft,
 					detectedBinary,
-					(_current, close) =>
-						runtimeStatusSubmenu(runtimeLines, kb, () => close()),
+					(_current, close) => {
+						submenuOpen = true;
+						return runtimeStatusSubmenu(runtimeLines, kb, () => {
+							submenuOpen = false;
+							close();
+						});
+					},
 				);
 				const list = new SettingsList(
 					items,
@@ -1043,8 +1053,16 @@ export async function runImagesCommand(
 						// 'q'/'Q' is an exact alias of Esc (#048): it cancels and is reported,
 						// so a dirty draft is never discarded silently. Letter keys go through
 						// the host matcher so kitty-protocol input still lands on them (#041) —
-						// a raw compare would never fire for CSI-u.
+						// a raw compare would never fire for CSI-u. With a submenu open, Esc
+						// closes only the submenu, so q must too — otherwise q discarded a
+						// draft the user could not even see (#062); the list routes the key to
+						// the open submenu, whose own q branch does exactly that.
 						if (matchesKey(data, "q") || matchesKey(data, "shift+q")) {
+							if (submenuOpen) {
+								list.handleInput(data);
+								tui.requestRender();
+								return;
+							}
 							done({ action: "cancelled" });
 							return;
 						}
