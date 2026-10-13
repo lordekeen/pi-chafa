@@ -1,8 +1,8 @@
-import type {
-	ExtensionAPI,
-	ExtensionCommandContext,
-	ExtensionUIContext,
-	ThemeColor,
+import {
+	type ExtensionAPI,
+	type ExtensionCommandContext,
+	type ExtensionUIContext,
+	getSettingsListTheme,
 } from "@earendil-works/pi-coding-agent";
 import {
 	Container,
@@ -277,25 +277,28 @@ export function buildSettingItems(
 }
 
 /**
- * Format SettingsListTheme safely adapting the host Theme if present.
+ * The panel's row theme is the host's own `getSettingsListTheme()`, so its rows
+ * match pi's `/settings` panel instead of a local look-alike (#051).
+ *
+ * The host publishes its theme through a proxy that throws until `initTheme()`
+ * has run ("Theme not initialized. Call initTheme() first."), and a mounted panel
+ * must never take the session down with it: an uninitialised theme degrades to
+ * unstyled text — never to a hardcoded colour.
  */
-export function createSettingsTheme(theme?: {
-	bold?: (text: string) => string;
-	fg?: (color: ThemeColor, text: string) => string;
-}): SettingsListTheme {
-	const fg = (color: ThemeColor, text: string) =>
-		theme?.fg ? theme.fg(color, text) : text;
-	const bold = (text: string) => (theme?.bold ? theme.bold(text) : text);
+const UNSTYLED_SETTINGS_THEME: SettingsListTheme = {
+	label: (text) => text,
+	value: (text) => text,
+	description: (text) => text,
+	cursor: "→ ",
+	hint: (text) => text,
+};
 
-	return {
-		label: (text: string, selected: boolean) =>
-			selected ? bold(fg("accent", text)) : fg("text", text),
-		value: (text: string, selected: boolean) =>
-			selected ? bold(fg("accent", text)) : fg("muted", text),
-		description: (text: string) => fg("muted", text),
-		cursor: fg("accent", "→ "),
-		hint: (text: string) => fg("dim", text),
-	};
+function hostSettingsListTheme(): SettingsListTheme {
+	try {
+		return getSettingsListTheme();
+	} catch {
+		return UNSTYLED_SETTINGS_THEME;
+	}
 }
 
 /**
@@ -376,14 +379,17 @@ export interface ImagesCommandDeps {
 	capsImages: () => AgentCapsImages;
 	/** Atomic pi-chafa.json write — injectable for write-count assertions (#045). */
 	writeConfigFile: (agentDir: string, config: ChafaConfig) => void;
+	/** Row theme for the panel's `SettingsList` — the host's own by default (#051). */
+	settingsListTheme: () => SettingsListTheme;
 }
 
-function defaultImagesDeps(): ImagesCommandDeps {
+export function defaultImagesDeps(): ImagesCommandDeps {
 	return {
 		probeChafa: cachedProbe,
 		readHostImageSettings,
 		capsImages: () => getCapabilities().images,
 		writeConfigFile,
+		settingsListTheme: hostSettingsListTheme,
 	};
 }
 
@@ -554,7 +560,7 @@ export async function runImagesCommand(
 				const list = new SettingsList(
 					items,
 					Math.min(items.length + 2, 12),
-					createSettingsTheme(theme),
+					d.settingsListTheme(),
 					(id, newValue) => {
 						// Stage only: parse + validate into the draft; nothing touches
 						// the file until the confirm (#045).

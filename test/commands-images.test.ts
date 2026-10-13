@@ -1,6 +1,7 @@
 import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { getSettingsListTheme, initTheme } from "@earendil-works/pi-coding-agent";
 import {
 	getKeybindings,
 	KeybindingsManager,
@@ -14,7 +15,7 @@ import {
 	applyMenuChange,
 	buildSettingItems,
 	collectRuntimeFacts,
-	createSettingsTheme,
+	defaultImagesDeps,
 	describeRuntime,
 	type ImagesCommandDeps,
 	resolveRuntimeCaps,
@@ -27,6 +28,20 @@ const FAKE_PROBE = {
 	binary: "chafa",
 	version: { major: 1, minor: 18 },
 	loaders: ["PNG", "JPEG", "GIF", "WEBP"],
+};
+
+/**
+ * Plain row theme for the panel (#051). Production defaults to the host's
+ * `getSettingsListTheme()`, which throws until the host has initialised a theme
+ * ("Theme not initialized"); this suite must stay hermetic, so every call
+ * injects this instead of a theme that needs a running host.
+ */
+const PLAIN_SETTINGS_THEME = {
+	label: (text: string) => text,
+	value: (text: string) => text,
+	description: (text: string) => text,
+	cursor: "→ ",
+	hint: (text: string) => text,
 };
 
 /**
@@ -49,6 +64,7 @@ const runImagesCommand = (
 			images: null,
 		}),
 		capsImages: () => null,
+		settingsListTheme: () => PLAIN_SETTINGS_THEME,
 		...overrides,
 	});
 
@@ -178,31 +194,30 @@ describe("buildSettingItems", () => {
 	});
 });
 
-describe("createSettingsTheme", () => {
-	it("renders fallback formatting safely without theme functions", () => {
-		const theme = createSettingsTheme();
-		expect(theme.label("label", true)).toBe("label");
-		expect(theme.label("label", false)).toBe("label");
-		expect(theme.value("val", true)).toBe("val");
-		expect(theme.value("val", false)).toBe("val");
-		expect(theme.description("desc")).toBe("desc");
-		expect(theme.cursor).toBe("→ ");
-		expect(theme.hint("hint")).toBe("hint");
+describe("defaultImagesDeps", () => {
+	// This must stay FIRST in the describe: initTheme() below sets a process-global
+	// theme that never gets unset, and the fallback path is only reachable before it.
+	it("degrades to unstyled rows when the host has no theme yet (#051)", () => {
+		const plain = defaultImagesDeps().settingsListTheme();
+		expect(plain.label("label", true)).toBe("label");
+		expect(plain.value("val", true)).toBe("val");
+		expect(plain.description("desc")).toBe("desc");
+		expect(plain.cursor).toBe("→ ");
+		expect(plain.hint("hint")).toBe("hint");
 	});
 
-	it("delegates to host theme fg and bold when provided", () => {
-		const mockTheme = {
-			fg: (color: string, text: string) => `[${color}]${text}`,
-			bold: (text: string) => `*${text}*`,
-		};
-		const theme = createSettingsTheme(mockTheme);
-		expect(theme.label("label", true)).toBe("*[accent]label*");
-		expect(theme.label("label", false)).toBe("[text]label");
-		expect(theme.value("val", true)).toBe("*[accent]val*");
-		expect(theme.value("val", false)).toBe("[muted]val");
-		expect(theme.description("desc")).toBe("[muted]desc");
-		expect(theme.cursor).toBe("[accent]→ ");
-		expect(theme.hint("hint")).toBe("[dim]hint");
+	it("wires the host's getSettingsListTheme for the panel rows (#051)", () => {
+		// Hermetic: the system theme is built into the host package (createSystemTheme),
+		// so initTheme() reads nothing from the developer's disk or config dir.
+		initTheme();
+		const theme = defaultImagesDeps().settingsListTheme();
+		const host = getSettingsListTheme();
+		expect(theme.label("label", true)).toBe(host.label("label", true));
+		expect(theme.label("label", false)).toBe(host.label("label", false));
+		expect(theme.value("val", false)).toBe(host.value("val", false));
+		expect(theme.description("desc")).toBe(host.description("desc"));
+		expect(theme.cursor).toBe(host.cursor);
+		expect(theme.hint("hint")).toBe(host.hint("hint"));
 	});
 });
 
@@ -1091,6 +1106,28 @@ describe("runImagesCommand", () => {
 		);
 		return { run, notifyMock, mounted: () => mounted };
 	};
+
+	it("styles the panel rows with the injected host theme (#051)", async () => {
+		const marker = {
+			label: (text: string, selected: boolean) =>
+				selected ? `SEL<${text}>` : text,
+			value: (text: string) => text,
+			description: (text: string) => text,
+			cursor: "→ ",
+			hint: (text: string) => text,
+		};
+		let panel: { render: (w: number) => string[] } | undefined;
+		const { run } = await mountPanel({
+			deps: { settingsListTheme: () => marker },
+			simulate: (c) => {
+				panel = c;
+				c.handleInput("\x1b"); // Esc: close so the command completes
+			},
+		});
+		await run;
+		// The marker proves the injected theme reaches SettingsList's rows.
+		expect(panel?.render(80).join("\n")).toContain("SEL<");
+	});
 
 	it("stages edits: Esc discards and the file stays byte-identical (#045)", async () => {
 		writeFileSync(join(testDir, "pi-chafa.json"), JSON.stringify({ cellWidth: 71 }));
