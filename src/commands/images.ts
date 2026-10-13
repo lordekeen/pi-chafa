@@ -623,7 +623,7 @@ export async function runImagesCommand(
 				);
 
 				const container = new Container();
-				container.addChild(new Text("pi-chafa Settings", 1, 0));
+				const title = new Text("", 2, 0);
 				// The footer switches on dirty state: the save chord is advertised
 				// only while the draft differs from the file (#045). Navigation,
 				// confirm and cancel are named from the LIVE bindings (#053) — the host
@@ -634,7 +634,12 @@ export async function runImagesCommand(
 				const hint = new Text("", 0, 0);
 				const dim = (text: string): string => theme.fg("dim", text);
 				const cancelKey = `${keyText("tui.select.cancel")}/q`;
+				// Both chrome lines are (re)built from the theme the factory handed us, so
+				// a live theme switch lands on the next input instead of leaving a styled
+				// string frozen from mount; the title sits in the same two-column gutter
+				// as the list's rows (#056).
 				const refreshHint = (): void => {
+					title.setText(theme.bold("pi-chafa Settings"));
 					hint.setText(
 						dim(
 							countChanges(draft, base) > 0
@@ -644,9 +649,13 @@ export async function runImagesCommand(
 					);
 				};
 				refreshHint();
-				container.addChild(hint);
+				container.addChild(title);
 				container.addChild(new Spacer(1));
 				container.addChild(list);
+				// Below the list, beside the host's own hint line: the two key lines that
+				// describe this panel belong together, and the save chord is the one
+				// closest to the rows it saves (#056).
+				container.addChild(hint);
 
 				// The one confirm: write once, close, report the count and file.
 				// A failed write warns, keeps the draft, and leaves the panel open

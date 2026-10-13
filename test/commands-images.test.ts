@@ -606,6 +606,45 @@ describe("runImagesCommand", () => {
 		expect(footer).not.toContain("escape");
 	});
 
+	it("themes and aligns the title, and puts the key hint under the list (#056)", async () => {
+		let rendered: string[] = [];
+		const customMock = vi.fn().mockImplementation(async (cb) => {
+			const component = cb(
+				{ requestRender: vi.fn() },
+				{
+					fg: (_c: string, text: string) => text,
+					bold: (text: string) => `*${text}*`,
+				},
+				getKeybindings(),
+				() => {},
+			) as { render: (w: number) => string[] };
+			rendered = component.render(80);
+			return { action: "cancelled" };
+		});
+		await runImagesCommand(
+			{ getAllTools: () => [] } as never,
+			"",
+			{
+				mode: "tui",
+				hasUI: true,
+				ui: {
+					custom: customMock,
+					select: vi.fn(),
+					notify: vi.fn(),
+					input: vi.fn(),
+				},
+			} as never,
+		);
+		// Themed bold, in the same two-column gutter the list's rows use.
+		expect(rendered[0]).toContain("*pi-chafa Settings*");
+		expect(rendered[0]?.startsWith("  *")).toBe(true);
+		// The panel's key hint sits below the rows (and below the host's own line).
+		const rowIndex = rendered.findIndex((line) => line.includes("Prefer native"));
+		const hintIndex = rendered.findIndex((line) => line.includes("navigate"));
+		expect(rowIndex).toBeGreaterThan(-1);
+		expect(hintIndex).toBeGreaterThan(rowIndex);
+	});
+
 	it("prints runtime status for an explicit 'status' argument without opening the panel (#016)", async () => {
 		const pi = { getAllTools: () => [] };
 		const notifyMock = vi.fn();
