@@ -22,6 +22,7 @@ import {
 	nearMiss,
 	resolveRuntimeCaps,
 	runImagesCommand as runImagesCommandRaw,
+	runtimeStatusSubmenu,
 } from "../src/commands/images.js";
 import { COLOR_MODES, DITHER_MODES, type ChafaConfig } from "../src/types.js";
 
@@ -399,6 +400,32 @@ describe("nearMiss (#055)", () => {
 	});
 });
 
+describe("runtimeStatusSubmenu (#049)", () => {
+	const LINES = ["Detected image protocol: kitty", "chafa: 1.18 (chafa)"];
+
+	it("renders the fact lines that replace the rows", () => {
+		const component = runtimeStatusSubmenu(LINES, getKeybindings(), () => {});
+		expect(component.render(80).join("\n")).toContain("Detected image protocol: kitty");
+		expect(component.render(80).join("\n")).toContain("chafa: 1.18 (chafa)");
+	});
+
+	it("closes itself on cancel, Enter, Space and q", () => {
+		// The list routes EVERY key to an open submenu and never sees it again, so a
+		// submenu that does not close itself is a dead end.
+		for (const key of ["\x1b", "\r", " ", "q"]) {
+			const close = vi.fn();
+			runtimeStatusSubmenu(LINES, getKeybindings(), close).handleInput?.(key);
+			expect(close).toHaveBeenCalledTimes(1);
+		}
+	});
+
+	it("ignores a stray key rather than closing on anything", () => {
+		const close = vi.fn();
+		runtimeStatusSubmenu(LINES, getKeybindings(), close).handleInput?.("j");
+		expect(close).not.toHaveBeenCalled();
+	});
+});
+
 describe("runImagesCommand", () => {
 	let testDir: string;
 	const originalConfigDir = process.env.CHAFA_CONFIG_DIR;
@@ -604,6 +631,45 @@ describe("runImagesCommand", () => {
 		expect(footer).toContain("ctrl+g/q close");
 		expect(footer).not.toContain("up/down navigate");
 		expect(footer).not.toContain("escape");
+	});
+
+	it("opens the runtime facts as an in-panel submenu instead of a dialog (#049)", async () => {
+		const selectMock = vi.fn();
+		let rendered: string[] = [];
+		const customMock = vi.fn().mockImplementation(async (cb) => {
+			const component = cb(
+				{ requestRender: vi.fn() },
+				{
+					fg: (_c: string, text: string) => text,
+					bold: (text: string) => text,
+				},
+				getKeybindings(),
+				() => {},
+			) as { handleInput: (d: string) => void; render: (w: number) => string[] };
+			for (let i = 0; i < 8; i++) component.handleInput("\x1b[B"); // → Runtime status
+			component.handleInput("\r"); // Enter: the list owns activation now
+			rendered = component.render(80);
+			return { action: "cancelled" };
+		});
+		await runImagesCommand(
+			{ getAllTools: () => [] } as never,
+			"",
+			{
+				mode: "tui",
+				hasUI: true,
+				ui: {
+					custom: customMock,
+					select: selectMock,
+					notify: vi.fn(),
+					input: vi.fn(),
+				},
+			} as never,
+		);
+		// An open submenu renders in place of the rows, so the facts are visible in-panel…
+		expect(rendered.join("\n")).toContain("Detected image protocol: ");
+		expect(rendered.join("\n")).toContain("Host showImages: ");
+		// …and nothing opened a dialog for them any more.
+		expect(selectMock).not.toHaveBeenCalled();
 	});
 
 	it("themes and aligns the title, and puts the key hint under the list (#056)", async () => {

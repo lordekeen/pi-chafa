@@ -6,9 +6,11 @@ import {
 	keyText,
 } from "@earendil-works/pi-coding-agent";
 import {
+	type Component,
 	Container,
 	getCapabilities,
 	Key,
+	type KeybindingsManager,
 	matchesKey,
 	type SettingItem,
 	SettingsList,
@@ -216,12 +218,47 @@ export function nearMiss(rawArg: string, known = "status"): string | undefined {
 }
 
 /**
+ * The runtime facts as a host `SettingsList` submenu (#049).
+ *
+ * While a submenu is open the host list routes **every** key to it and renders it
+ * in place of the rows (`settings-list.js:50-53, 160-164`), so it has to close
+ * itself — a submenu without `handleInput` is a dead end. Cancel (remap-safe),
+ * Enter/Space and `q` close it; closing with no value leaves the row's value and
+ * the list's selection untouched.
+ */
+export function runtimeStatusSubmenu(
+	lines: string[],
+	kb: KeybindingsManager,
+	close: () => void,
+): Component {
+	const body = new Text(lines.join("\n"), 1, 1);
+	return {
+		render: (width: number) => body.render(width),
+		invalidate: () => body.invalidate(),
+		handleInput: (data: string) => {
+			if (
+				kb.matches(data, "tui.select.cancel") ||
+				kb.matches(data, "tui.select.confirm") ||
+				matchesKey(data, Key.enter) ||
+				matchesKey(data, "space") ||
+				matchesKey(data, "q")
+			) {
+				close();
+			}
+		},
+	};
+}
+
+/**
  * Build SettingItem rows for SettingsList (spec §4.2) with inline cycling values
- * and rich contextual descriptions.
+ * and rich contextual descriptions. `runtimeSubmenu` wires the runtime-facts
+ * submenu onto the status row (#049); the RPC fallback omits it and keeps its own
+ * select-based status flow.
  */
 export function buildSettingItems(
 	config: ChafaConfig,
 	detectedBinary?: string,
+	runtimeSubmenu?: SettingItem["submenu"],
 ): SettingItem[] {
 	const currentWidthStr = String(config.cellWidth);
 	const widthValues = WIDTH_PRESETS.includes(currentWidthStr)
@@ -316,6 +353,8 @@ export function buildSettingItems(
 			label: "Runtime status",
 			description: SETTING_DESCRIPTIONS.runtimeStatus,
 			currentValue: "view",
+			// Opens as a host submenu; without one (the fallback flow) the row is inert.
+			...(runtimeSubmenu ? { submenu: runtimeSubmenu } : {}),
 		},
 	];
 }
@@ -509,7 +548,6 @@ async function buildRuntimeFacts(
 type WizardAction =
 	| { action: "done"; report?: string }
 	| { action: "cancelled" }
-	| { action: "status" }
 	| { action: "input"; id: string };
 
 /** The eight user-settable fields of pi-chafa.json (spec §6.1), for staged-change counting (#045). */
@@ -593,6 +631,11 @@ export async function runImagesCommand(
 	// nothing (#039).
 	if (ctx.mode === "tui" && typeof ui.custom === "function") {
 		const detectedBinary = await probeDetected();
+		// The runtime facts are informational and static for the panel's lifetime:
+		// read them once and hand the lines to the status row's submenu (#049).
+		const runtimeLines = describeRuntime(
+			await buildRuntimeFacts(pi, config, agentDir, d),
+		);
 
 		// #045 staged persistence: the host SettingsList frame promises "Esc to
 		// cancel" (its hint line is fixed), so no edit may reach the file before
@@ -603,10 +646,16 @@ export async function runImagesCommand(
 		const base = config;
 		let draft = config;
 		for (;;) {
-			const items = buildSettingItems(draft, detectedBinary);
-			let currentIndex = 0;
-
 			const result = await ui.custom<WizardAction>((tui, theme, kb, done) => {
+				// Built per mount: the status row's submenu needs the keybindings the
+				// factory hands us (#049), and the mirror starts on the first row.
+				const items = buildSettingItems(
+					draft,
+					detectedBinary,
+					(_current, close) =>
+						runtimeStatusSubmenu(runtimeLines, kb, () => close()),
+				);
+				let currentIndex = 0;
 				const list = new SettingsList(
 					items,
 					Math.min(items.length + 2, 12),
@@ -695,7 +744,9 @@ export async function runImagesCommand(
 						// Single selection owner (#041): the mirror moves ONLY on the
 						// same factory-keybinding predicate the list itself uses, so it
 						// can never drift from the rendered highlight under remapped
-						// keybindings (the old raw-arrow fallback did).
+						// keybindings (the old raw-arrow fallback did). Enter is NOT
+						// intercepted: the list owns activation for every row, opening
+						// the status submenu or cycling a value (#049).
 						if (kb.matches(data, "tui.select.up")) {
 							currentIndex =
 								currentIndex === 0 ? items.length - 1 : currentIndex - 1;
@@ -705,20 +756,6 @@ export async function runImagesCommand(
 						}
 
 						const currentItem = items[currentIndex];
-						if (
-							(matchesKey(data, Key.enter) ||
-								kb.matches(data, "tui.select.confirm")) &&
-							currentItem
-						) {
-							// Pseudo-rows (values-less actions) belong to the wrapper;
-							// value rows fall through so the list cycles them. Saving is not a
-							// row at all: Ctrl+S is the only confirm (#054).
-							if (currentItem.id === "runtimeStatus") {
-								done({ action: "status" });
-								return;
-							}
-						}
-
 						// 'q'/'Q' is an exact alias of Esc (#048): it cancels and is reported,
 						// so a dirty draft is never discarded silently. Letter keys go through
 						// the host matcher so kitty-protocol input still lands on them (#041) —
@@ -761,13 +798,6 @@ export async function runImagesCommand(
 				// byte-identical; say so — silence reads as failure (#045).
 				ui.notify("pi-chafa: settings unchanged (cancelled)", "info");
 				return;
-			}
-
-			if (result.action === "status") {
-				const facts = await buildRuntimeFacts(pi, config, agentDir, d);
-				const options = [...describeRuntime(facts), "Close"];
-				await ui.select("Runtime status (informational)", options);
-				continue;
 			}
 
 			if (result.action === "input") {
