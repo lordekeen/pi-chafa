@@ -1114,6 +1114,64 @@ describe("runImagesCommand", () => {
 		});
 	});
 
+	it("accumulates only what was set across successive saves (#058)", async () => {
+		// The whole point of D25 in one sequence: each save layers onto what the file
+		// already holds, so the file is a record of the user's choices rather than a
+		// snapshot of whatever the defaults happened to be at save time.
+		const writer = vi.fn(writeConfigFile);
+		const ctx = {
+			mode: "tui",
+			hasUI: true,
+			ui: {
+				custom: vi.fn(),
+				select: vi.fn(),
+				notify: vi.fn(),
+				input: vi.fn(),
+			},
+		};
+		const run = (args: string): Promise<void> =>
+			runImagesCommand({ getAllTools: () => [] } as never, args, ctx as never, {
+				writeConfigFile: writer,
+			});
+		const fileJson = (): unknown =>
+			JSON.parse(readFileSync(join(testDir, "pi-chafa.json"), "utf8"));
+		const version = DEFAULT_CONFIG.version;
+
+		await run("colors 8");
+		expect(fileJson()).toStrictEqual({ version, colors: "8" });
+
+		await run("cellWidth 70");
+		expect(fileJson()).toStrictEqual({ version, colors: "8", cellWidth: 70 });
+
+		await run("binaryPath /opt/chafa");
+		expect(fileJson()).toStrictEqual({
+			version,
+			colors: "8",
+			cellWidth: 70,
+			binaryPath: "/opt/chafa",
+		});
+
+		// Clearing is a choice, not the removal of a key: null means "auto on PATH".
+		await run("binaryPath");
+		expect(fileJson()).toStrictEqual({
+			version,
+			colors: "8",
+			cellWidth: 70,
+			binaryPath: null,
+		});
+		expect(loadConfig(testDir).binaryPath).toBeNull();
+
+		// The other side of the ladder: cellWidth is explicit now, so the host's own
+		// value no longer supplies it (#010).
+		expect(
+			resolveConfig({}, testDir, {
+				showImages: true,
+				imageWidthCells: 80,
+				images: null,
+			}).symbols.cellWidth,
+		).toBe(70);
+	});
+
 	it("refuses a bad value without writing and without opening the panel (#050)", async () => {
 		const writer = vi.fn(writeConfigFile);
 		const notifyMock = vi.fn();
