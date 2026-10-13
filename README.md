@@ -10,7 +10,7 @@ This is a **UI/UX feature, not a vision feature**: the model never receives the 
 
 ## Requirements
 
-- A pi host compatible with the peer range (see `package.json`; extensions run in pi's isolated npm root).
+- A pi host whose bundled packages provide what this extension imports: `@earendil-works/pi-coding-agent` **≥ 1.0.4** (`DynamicBorder`, `getSettingsListTheme`, `keyText`, `getAgentDir`) and `@earendil-works/pi-tui` **≥ 1.0.4** (`SettingsList`, `getCapabilities`, `matchesKey`). Pi's packaging contract requires these as `"*"` peers **and suppresses peer installation**, so this floor cannot live in `package.json` — it is stated here instead. Run `pi update` if the host is older.
 - A system **`chafa`** binary ≥ **1.10.0** on `PATH` (dev/test target: 1.18.x). Install: `brew install chafa` (macOS), `apt install chafa` (Debian/Ubuntu), or your distro's package. Set `CHAFA_BIN` to an explicit path if it is not on `PATH`.
 
 ## Install
