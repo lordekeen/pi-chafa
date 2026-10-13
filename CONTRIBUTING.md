@@ -45,7 +45,7 @@ Before opening a pull request or committing changes, ensure that all four verifi
 
 ```bash
 npm run typecheck   # Typecheck with tsc --noEmit
-npm run lint        # Code style and lint checks with Biome
+npm run lint        # Code style and lint checks with Biome, over src/ and test/
 npm test            # Run Vitest test suite
 npm run build       # Build distribution artifacts in dist/
 ```

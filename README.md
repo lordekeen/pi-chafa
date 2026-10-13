@@ -33,7 +33,7 @@ Run `/images` to tune defaults (including `timeoutMs`) and inspect the runtime e
 - <kbd>e</kbd> — Pick a setting from a list, then type a custom value (staged)
 - <kbd>Ctrl</kbd>+<kbd>S</kbd> — Save the staged changes and close (the only confirm)
 - Mouse — click a row to move the selection, click it again to cycle or open it (the list's own affordances: press selects, click activates)
-- <kbd>Esc</kbd> / <kbd>q</kbd> — Discard the staged changes and close; both report `pi-chafa: settings unchanged (cancelled)` (the file stays untouched)
+- <kbd>Esc</kbd> / <kbd>q</kbd> — Discard the staged changes and close; both report `pi-chafa: settings unchanged (cancelled)` (the file stays untouched). With the **Runtime status** submenu open, both close just that submenu and return to the list, so a step back never discards the draft.
 
 `/images status` prints those runtime facts without opening the panel. `/images <key> <value>` sets one setting directly, writes the file once, and reports the new value and the file it wrote — this is the form that works where no panel can open (`print`/`json`):
 
@@ -129,16 +129,19 @@ Precedence is always **tool params > `CHAFA_*` env > config file > defaults** (f
 | `CHAFA_TIMEOUT_MS` | `timeoutMs` | Integer ms. |
 | `CHAFA_CONFIG_DIR` | config location | Override for `pi-chafa.json`; defaults to `~/.pi/agent`. |
 
-pi's image capability is resolved (read-only) through an explicit ladder, in priority order: an **environment guard** (#026 — terminals known to be unable to render images, i.e. Alacritty, VS Code, Zed, JetBrains, Windows Terminal, GNU screen and `win32`, always resolve to Chafa symbols; under tmux ambient declarations are ignored while `PI_IMAGE_PROTOCOL` stays an explicit opt-in) → `getCapabilities().images` → pi's settings `terminal.images` (`"kitty"`/`"iterm2"`; `false`, `"auto"`, absent, or unrecognised all mean "no override") → `PI_IMAGE_PROTOCOL` → `null` (Chafa symbols). `terminal.showImages` and `terminal.imageWidthCells` are also read; nothing in pi's settings is ever written.
+pi's image capability is resolved (read-only) through an explicit ladder, in priority order: an **environment guard** (terminals known to be unable to render images, i.e. Alacritty, VS Code, Zed, JetBrains, Windows Terminal, GNU screen and `win32`, always resolve to Chafa symbols; under tmux ambient declarations are ignored while `PI_IMAGE_PROTOCOL` stays an explicit opt-in) → `getCapabilities().images` → pi's settings `terminal.images` (`"kitty"`/`"iterm2"`; `false`, `"auto"`, absent, or unrecognised all mean "no override") → `PI_IMAGE_PROTOCOL` → `null` (Chafa symbols). `terminal.showImages` and `terminal.imageWidthCells` are also read; nothing in pi's settings is ever written.
 
 ## Limitations (v1)
 
 - Animated files show a **still frame** (`--animate off`).
+- A single call reads at most **50** glob matches: a broader pattern (`**/*.png`) fails with an actionable cap error instead of flooding the chat.
+- Native delivery refuses a file above **32 MiB** and reports it per file (`pass format=symbols or use a smaller file`); the symbols path streams from disk through Chafa, so it has no such ceiling.
+- At most **4** Chafa subprocesses run at once, so a large multi-file call is bounded rather than launching one process per file.
 - Symbols width is clamped to the live terminal width (`columns - 2`) when the viewport is known; the clamp is a heuristic and cannot react to a resize that lands after rendering.
 - No sixel — kitty/iTerm2 blocks and Chafa symbols are the only delivery paths; a sixel path depends on upstream pi-tui work that has not landed.
 - Not a `read` override; pi-pretty's `read` may be preferable on native terminals (see the bundled skill).
 - On native terminals (kitty/iTerm2), a file that is not a recognized image format is a per-file error (`format="symbols"` may still render it via Chafa) — no image block is emitted, since a host-unrenderable block would be persisted in session history and rejected by providers on every later turn.
-- Native rendering depends on the terminal's own image-protocol implementation: a terminal that only *partially* implements kitty graphics can leave blank space where an image was placed — observed with Konsole 26.08 when `terminal.images` declares `"kitty"`, reproducible with pi's built-in `read`, i.e. terminal-side. Prefer `format: "symbols"` there (#032).
+- Native rendering depends on the terminal's own image-protocol implementation: a terminal that only *partially* implements kitty graphics can leave blank space where an image was placed — observed with Konsole 26.08 when `terminal.images` declares `"kitty"`, reproducible with pi's built-in `read`, i.e. terminal-side. Prefer `format: "symbols"` there.
 
 ## Troubleshooting
 
@@ -146,8 +149,8 @@ pi's image capability is resolved (read-only) through an explicit ladder, in pri
 - **Blank / wrong-color symbols** on a non-truecolor terminal → set `colors` to `16` or `8`.
 - **Kitty shows a caption but no image for a JPEG/GIF/WebP** → host PNG conversion limitation; pass `format: "symbols"`.
 - **Terminal supports Kitty graphics (e.g. Konsole) but renders ANSI symbols** → pi's auto-detection only recognizes `kitty`, `ghostty`, `wezterm`, and `warp`. Override via `export PI_IMAGE_PROTOCOL=kitty` or set `"terminal": { "images": "kitty" }` in `~/.pi/agent/settings.json`.
-- **A declared `terminal.images` is ignored** → pi-chafa refuses declarations in terminals known to be unable to render image protocols (Alacritty, VS Code, Zed, JetBrains, Windows Terminal, GNU screen, `win32`). Under tmux only `PI_IMAGE_PROTOCOL` can force native (via kitty passthrough); `terminal.images` is deliberately ignored there because a stale declaration is what produced blank output. See #026.
-- **Native images render blank on Konsole** (with `"terminal": { "images": "kitty" }` declared) → Konsole only partially implements the kitty protocol; the same blank output occurs with pi's own `read` tool, so it is terminal-side. Pass `format: "symbols"`, or remove the declaration and let pi-chafa resolve symbols by default. Not a pi-chafa defect — see #032.
+- **A declared `terminal.images` is ignored** → pi-chafa refuses declarations in terminals known to be unable to render image protocols (Alacritty, VS Code, Zed, JetBrains, Windows Terminal, GNU screen, `win32`). Under tmux only `PI_IMAGE_PROTOCOL` can force native (via kitty passthrough); `terminal.images` is deliberately ignored there because a stale declaration is what produced blank output.
+- **Native images render blank on Konsole** (with `"terminal": { "images": "kitty" }` declared) → Konsole only partially implements the kitty protocol; the same blank output occurs with pi's own `read` tool, so it is terminal-side. Pass `format: "symbols"`, or remove the declaration and let pi-chafa resolve symbols by default. Not a pi-chafa defect.
 
 ## Contributing
 

@@ -58,7 +58,7 @@ tools: read, grep, find, ls, write, ext:pi-chafa/show_image, ext:pi-codegraph
 
 - Prefer explicit paths (`show_image path: "docs/plot.png"`) over globs.
 - Paths and globs are relative to the working directory; absolute paths, `~/...`, and pi's `@path` file-reference prefix also work.
-- Use narrow globs when the user says "all screenshots": `screenshots/*.png` — not broad `**` patterns.
+- Use narrow globs when the user says "all screenshots": `screenshots/*.png` — not broad `**` patterns. A single call expands at most 50 matches and fails with an actionable cap error beyond that, so a one-file-at-a-time call or a narrower pattern is the fix.
 
 ## Overrides
 

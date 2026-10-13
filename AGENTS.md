@@ -11,7 +11,7 @@ Project context and rules for AI agents working in this repository. Read this be
 
 ## Spec conflict rule
 
-The spec is **authoritative, but not frozen**. A change that contradicts the spec must amend the spec in the *same* change; never silently override it. The plan or task that ships the behavior carries the spec edit, so the tree never contains a behavior the spec denies (see "Spec wins in any conflict" in the Files & Architecture table). The spec itself lives in the local-only `docs/` tree (see below), so for anyone outside that tree the published contract is this file plus [`DESIGN.md`](DESIGN.md).
+The spec is **authoritative, but not frozen**. A change that contradicts the spec must amend the spec in the *same* change; never silently override it. The plan or task that ships the behavior carries the spec edit, so the tree never contains a behavior the spec denies (see "Spec wins in any conflict" in the Files & Architecture table). The spec itself lives in the local-only `docs/` tree (see below), so for anyone outside that tree the published contract is this file plus [`DESIGN.md`](DESIGN.md) — and the `#NNN` ids and `§N` section numbers cited throughout this file are entries in that same local tracker/spec, not resolvable links. Read every sentence as standing on its own; the surrounding prose, not the reference, is the rule.
 
 ## Non-negotiable invariants
 
@@ -38,6 +38,7 @@ The spec is **authoritative, but not frozen**. A change that contradicts the spe
 | [`src/show-image.ts`](src/show-image.ts) | The `show_image` tool definition, execution loop, no-UI degradation, and custom TUI renderers. |
 | [`src/commands/images.ts`](src/commands/images.ts) | `/images` slash command: terminal capability inspector, interactive settings panel, and the headless argument surface (`status` / `<key> <value>`, so every setting is reachable without dialogs — #050). |
 | [`skills/pi-chafa/SKILL.md`](skills/pi-chafa/SKILL.md) | Bundled skill auto-discovered by pi, guiding models on when to call `show_image`. |
+| [`test/`](test) | Hermetic vitest suites (9 files) covering every module: injected fakes for chafa, host settings, capabilities and the config writer, so nothing spawns the real binary or reads the developer's config. Panel tests mount the command through the shared `fakePanel` fixture in [`test/commands-images.test.ts`](test/commands-images.test.ts). |
 | [`scripts/smoke.mjs`](scripts/smoke.mjs) | Opt-in real-dependency smoke runner (`npm run test:smoke`): builds `dist/` then drives it against the real chafa binary, the real filesystem, and the real capability ladder. Not published — `scripts/` is outside the `files` allowlist. |
 | [`.github/workflows/ci.yml`](.github/workflows/ci.yml) | The four hermetic gates on push and pull requests, plus the optional smoke job against a real chafa + ImageMagick (#043). |
 | [`.github/workflows/release-please.yml`](.github/workflows/release-please.yml) | Release automation: release-please maintains the release PR (semver bump + `CHANGELOG.md`), and each created release **stages** the package on npm. |

@@ -24,7 +24,7 @@ Provide a universal image viewing capability for the [pi](https://pi.dev) coding
  (glob expansion, magic bytes)                    (caps, chafa ver, overrides)
                │                                             │
       Delivery Decision                              Interactive Config Menu
-    (src/detect.ts §7.2)                                     │
+        (src/detect.ts)                                     │
                │                                     Atomic JSON Writer
        ┌───────┴──────────────┐                      (~/.pi/agent/pi-chafa.json)
        ▼                      ▼
@@ -43,7 +43,8 @@ Provide a universal image viewing capability for the [pi](https://pi.dev) coding
 ### 3.1 Target Resolution & File Handling ([`src/images.ts`](src/images.ts))
 1. **Argument Parsing:** Accepts either `path` (single target) or `glob` (multi-file match).
 2. **Glob Translation:** Custom glob-to-regex translator supporting `*`, `?`, and recursive `**` directories matching zero-or-more segments in any position.
-3. **MIME Sniffing:** Inspects the first 16 bytes against magic number signatures for PNG, JPEG, GIF87a/89a, and WebP only (spec §7.4), to guarantee accurate content types without relying solely on file extensions. SVG is not magic-byte-sniffable (it is XML text), so it is not detectable this way at all.
+3. **MIME Sniffing:** Inspects the leading bytes against magic number signatures for PNG, JPEG, GIF87a/89a, and WebP only, to guarantee accurate content types without relying solely on file extensions. SVG is not magic-byte-sniffable (it is XML text), so it is not detectable this way at all.
+4. **Expansion Bounds:** A single call expands at most **50** glob matches; a broader pattern fails with an actionable cap error before any per-file work begins, so one call cannot flood the transcript.
 
 ### 3.2 Delivery Mode Decision Matrix ([`src/detect.ts`](src/detect.ts))
 Determines whether each target is rendered natively, converted to symbols, or degraded:
@@ -62,6 +63,8 @@ Determines whether each target is rendered natively, converted to symbols, or de
 - **Arg Hardening:** `--clear` is strictly omitted to protect the TUI alt-screen buffer. `--animate=off` is passed to prevent runaway loops on animated GIFs.
 - **Payload Cleaner:** Strips terminal cursor visibility toggles (`\x1b[?25h`, `\x1b[?25l`) and trailing carriage returns (`\r`) before passing strings to the TUI.
 - **Terminal Injection Guard:** [`stripControls`](src/show-image.ts) removes C0/DEL control characters and ANSI CSI sequences from paths and labels before formatting them into user-visible components.
+- **Viewport Clamp:** the requested width is reduced to `min(cellWidth, columns - 2)` when the live viewport width is known, so art cannot exceed the terminal. It is a heuristic: a resize that lands after rendering cannot be reacted to.
+- **Bounded Concurrency:** at most **4** Chafa subprocesses run at once; results are still assembled in match order.
 
 ### 3.4 Custom Rendering Pipeline ([`src/show-image.ts`](src/show-image.ts))
 - **Host ANSI Filter Bypass:** Standard tool result text passes through `getTextOutput()`, which removes ANSI formatting. To deliver vibrant ANSI/Unicode art, `show_image` implements [`renderResult`](src/show-image.ts), returning a pi-tui [`Text`](src/show-image.ts) component that renders sequences directly into the terminal cell grid.
@@ -86,9 +89,9 @@ Determines whether each target is rendered natively, converted to symbols, or de
 1. **Partial Success:** When resolving multiple images, failures on individual files (e.g., corrupt header, file missing) are captured per-file. Successful files are still rendered, and the summary reports the count of failed files.
 2. **Actionable Errors:** If no files succeed or a required dependency is missing (e.g., `chafa` not found on `PATH`), descriptive errors with clear remediation steps are returned (`isError: true`).
 3. **No-UI Graceful Degradation:** When run under print/batch modes (`ctx.hasUI === false`), image rendering is bypassed in favor of clean informative text placeholders without failing the tool call.
+4. **Resource Bounds:** every unbounded axis has a ceiling — 50 glob matches per call, a 32 MiB limit on the native path (where the bytes are buffered and base64-retained in session history), 4 concurrent Chafa subprocesses, and a per-invocation `timeoutMs` on each. The symbols path reads only a small sniff window plus a `stat` and lets Chafa read the file itself, so it carries no size ceiling.
 
 ## 6. Deferred & Future Scope
 
 - **Upstream Sixel Support:** Sixel rendering is deferred pending host TUI architecture updates; pi-tui exposes no sixel path today.
-- **Dynamic Terminal Width Clamping:** Symbols output currently relies on configured `cellWidth` (default: 60) rather than dynamic terminal column queries.
 - **WASM Fallback:** Embedded WebAssembly fallback for systems lacking native `chafa` packages.
