@@ -677,6 +677,77 @@ describe("runImagesCommand", () => {
 		expect(selectMock).not.toHaveBeenCalled();
 	});
 
+	it("forwards mouse press and wheel to the list, so activation follows the pointer (#049)", async () => {
+		let panel:
+			| {
+					handleMouse?: (e: Record<string, unknown>) => unknown;
+					handleInput: (d: string) => void;
+					render: (w: number) => string[];
+			  }
+			| undefined;
+		let lines: string[] = [];
+		const customMock = vi.fn().mockImplementation(async (cb) => {
+			const component = cb(
+				{ requestRender: vi.fn() },
+				{
+					fg: (_c: string, text: string) => text,
+					bold: (text: string) => text,
+				},
+				getKeybindings(),
+				() => {},
+			) as NonNullable<typeof panel>;
+			panel = component;
+			lines = component.render(80);
+			return { action: "cancelled" };
+		});
+		await runImagesCommand(
+			{ getAllTools: () => [] } as never,
+			"",
+			{
+				mode: "tui",
+				hasUI: true,
+				ui: {
+					custom: customMock,
+					select: vi.fn(),
+					notify: vi.fn(),
+					input: vi.fn(),
+				},
+			} as never,
+		);
+		// Mouse only reaches the mounted component, so this is what proves the panel is
+		// the Container rather than a plain object wrapping one.
+		expect(panel?.handleMouse).toBeTypeOf("function");
+		const mouse = (type: string, y: number, wheelDelta = 0) => ({
+			type,
+			button: "left",
+			x: 0,
+			y,
+			screenX: 0,
+			screenY: 0,
+			width: 80,
+			height: lines.length,
+			shift: false,
+			alt: false,
+			ctrl: false,
+			wheelDelta,
+		});
+		const cursorAt = () => lines.findIndex((line) => line.includes("→ "));
+		// The title and its spacer sit above the list, so its first row is line 2.
+		expect(cursorAt()).toBe(2);
+		// A press selects the row under the pointer (Dither mode is row 2 → y 4)…
+		panel?.handleMouse?.(mouse("press", 4));
+		lines = panel?.render(80) ?? [];
+		expect(cursorAt()).toBe(4);
+		// …and Enter then acts on THAT row instead of a stale keyboard cursor.
+		panel?.handleInput("\r");
+		lines = panel?.render(80) ?? [];
+		expect(lines[4]).toContain("ordered"); // dither: none → ordered
+		// Wheel moves the selection by one; the list clamps at the ends.
+		panel?.handleMouse?.(mouse("wheel", 4, 1));
+		lines = panel?.render(80) ?? [];
+		expect(cursorAt()).toBe(5);
+	});
+
 	it("themes and aligns the title, and puts the key hint under the list (#056)", async () => {
 		let rendered: string[] = [];
 		const customMock = vi.fn().mockImplementation(async (cb) => {

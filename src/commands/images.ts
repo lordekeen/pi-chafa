@@ -781,9 +781,12 @@ export async function runImagesCommand(
 					}
 				};
 
-				return {
-					render: (w: number) => container.render(w),
-					invalidate: () => container.invalidate(),
+				// The mounted component is the one that receives mouse events (tui.js:14),
+				// and `Container.handleMouse` is what forwards them to a child — the same
+				// device pi's own settings wrapper uses. So the panel has to BE the
+				// container rather than wrap it (#049); grafting handleInput onto the
+				// instance makes one object that is both.
+				return Object.assign(container, {
 					handleInput: (data: string) => {
 						// Ctrl+S = confirm, intercepted BEFORE the list can route the
 						// key anywhere (search/submenu keys would swallow it otherwise;
@@ -816,7 +819,7 @@ export async function runImagesCommand(
 						tui.requestRender();
 						refreshHint();
 					},
-				};
+				});
 			});
 
 			if (!result || result.action === "done") {
