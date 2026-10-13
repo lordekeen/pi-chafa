@@ -23,6 +23,8 @@ import { createCachedProbe } from "../chafa.js";
 import {
 	getConfigDir,
 	loadConfig,
+	loadFileConfig,
+	mergeForWrite,
 	readHostImageSettings,
 	writeConfigFile,
 } from "../config.js";
@@ -489,7 +491,7 @@ export interface ImagesCommandDeps {
 	/** Terminal image capability singleton (`getCapabilities().images`). */
 	capsImages: () => AgentCapsImages;
 	/** Atomic pi-chafa.json write — injectable for write-count assertions (#045). */
-	writeConfigFile: (agentDir: string, config: ChafaConfig) => void;
+	writeConfigFile: (agentDir: string, config: Partial<ChafaConfig>) => void;
 	/** Row theme for the panel's `SettingsList` — the host's own by default (#051). */
 	settingsListTheme: () => SettingsListTheme;
 }
@@ -545,7 +547,7 @@ function persistSetting(
 	agentDir: string,
 	ui: Pick<ExtensionUIContext, "notify">,
 	write: ImagesCommandDeps["writeConfigFile"],
-	id: string,
+	id: SettingKey,
 	value: string,
 	message: (next: ChafaConfig) => string,
 ): ChafaConfig | null {
@@ -554,7 +556,12 @@ function persistSetting(
 		ui.notify(refusalText(id, value), "warning");
 		return null;
 	}
-	write(agentDir, next);
+	// Sparse write (D25, #058): the file's own keys keep the file's values, and only
+	// the key this step changed takes the new one — a full-config write would make
+	// every key explicitly present and override pi's own terminal.imageWidthCells
+	// for `cellWidth` (#010). Read per step: the fallback writes immediately, so the
+	// current file is what the next step layers onto.
+	write(agentDir, mergeForWrite(loadFileConfig(agentDir).config, next, [id]));
 	// Sanitize at the single notification funnel: every template (generic
 	// "updated to", binaryPath, symbolsSet) carries user-entered values, and
 	// invariant 3 requires no raw control bytes reach the TUI (#038).
@@ -706,9 +713,14 @@ export function parseSettingArg(
 	return { ok: true, next };
 }
 
+/** The settings that differ between two configs, field-by-field (#045, #058). */
+function changedKeys(a: ChafaConfig, b: ChafaConfig): SettingKey[] {
+	return SETTING_KEYS.filter((key) => a[key] !== b[key]);
+}
+
 /** Number of settings that differ between two configs (field-by-field, #045). */
 function countChanges(a: ChafaConfig, b: ChafaConfig): number {
-	return SETTING_KEYS.filter((key) => a[key] !== b[key]).length;
+	return changedKeys(a, b).length;
 }
 
 /**
@@ -813,6 +825,9 @@ export async function runImagesCommand(
 	const d = { ...defaultImagesDeps(), ...deps };
 	const ui = ctx.ui;
 	const agentDir = getConfigDir();
+	// The file's own view, captured once: what a save persists is exactly this plus
+	// the keys the save changed (D25, #058), never the resolved config.
+	const fileValues = loadFileConfig(agentDir).config;
 	let config = loadConfig(agentDir);
 
 	// Argument surface (#016 partial, decision D5, #050 complete): `status` prints
@@ -838,7 +853,10 @@ export async function runImagesCommand(
 				reportCommandText(ctx, ui, `pi-chafa: ${parsed.reason}`, "warning");
 				return;
 			}
-			d.writeConfigFile(agentDir, parsed.next);
+			d.writeConfigFile(
+				agentDir,
+				mergeForWrite(fileValues, parsed.next, [canonical]),
+			);
 			reportCommandText(
 				ctx,
 				ui,
@@ -891,6 +909,9 @@ export async function runImagesCommand(
 		// removed, #054, superseding #047); Esc discards. The fallback select flow keeps its per-step persistence
 		// (dialog frames promise nothing — honest as-is).
 		const base = config;
+		// What the FILE holds (not the resolved config): a save writes these values back
+		// plus the draft's changed keys (D25, #058). Captured at open, like `base`.
+		const fileBase = fileValues;
 		let draft = config;
 		for (;;) {
 			const result = await ui.custom<WizardAction>((tui, theme, kb, done) => {
@@ -965,16 +986,19 @@ export async function runImagesCommand(
 				// A failed write warns, keeps the draft, and leaves the panel open
 				// for a retry (#045).
 				const saveAndClose = (): void => {
-					const n = countChanges(draft, base);
-					if (n === 0) {
+					const changed = changedKeys(draft, base);
+					if (changed.length === 0) {
 						done({ action: "done", report: "pi-chafa: settings unchanged" });
 						return;
 					}
 					try {
-						d.writeConfigFile(agentDir, draft);
+						d.writeConfigFile(
+							agentDir,
+							mergeForWrite(fileBase, draft, changed),
+						);
 						done({
 							action: "done",
-							report: `pi-chafa: ${n} setting${n === 1 ? "" : "s"} saved to ${agentDir}/pi-chafa.json`,
+							report: `pi-chafa: ${changed.length} setting${changed.length === 1 ? "" : "s"} saved to ${agentDir}/pi-chafa.json`,
 						});
 					} catch (error) {
 						ui.notify(

@@ -337,8 +337,16 @@ export function mergeForWrite(
 	return { version: DEFAULT_CONFIG.version, ...fileValues, ...picked };
 }
 
-/** Persist a config to <agentDir>/pi-chafa.json (used by the /images command). */
-export function writeConfigFile(agentDir: string, config: ChafaConfig): void {
+/**
+ * Persist the given object to <agentDir>/pi-chafa.json (used by the /images
+ * command). The shape is the caller's business — `mergeForWrite` decides what a
+ * save contains — so this takes a partial: a sparse file, not a materialized
+ * config, is the normal case (#058, D25).
+ */
+export function writeConfigFile(
+	agentDir: string,
+	config: Partial<ChafaConfig>,
+): void {
 	if (!agentDir)
 		throw new Error(
 			"no config directory available (set CHAFA_CONFIG_DIR or HOME)",

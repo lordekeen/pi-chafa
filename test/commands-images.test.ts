@@ -9,7 +9,7 @@ import {
 	TUI_KEYBINDINGS,
 } from "@earendil-works/pi-tui";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { DEFAULT_CONFIG, loadConfig, writeConfigFile } from "../src/config.js";
+import { DEFAULT_CONFIG, loadConfig, resolveConfig, writeConfigFile } from "../src/config.js";
 import {
 	SETTING_DESCRIPTIONS,
 	SETTING_KEYS,
@@ -1047,6 +1047,73 @@ describe("runImagesCommand", () => {
 		expect(customMock).not.toHaveBeenCalled();
 	});
 
+	it("writes only the key it changed, so pi's cellWidth still supplies the default (#058)", async () => {
+		// The defect: a save serialized the fully materialized config, which made every
+		// key explicitly present. resolveConfig reads loadFileConfig().keys to decide
+		// whether pi's own terminal.imageWidthCells may still supply cellWidth (#010),
+		// so one unrelated save silently overrode the host setting.
+		const writer = vi.fn(writeConfigFile);
+		const ctx = {
+			mode: "tui",
+			hasUI: true,
+			ui: {
+				custom: vi.fn(),
+				select: vi.fn(),
+				notify: vi.fn(),
+				input: vi.fn(),
+			},
+		};
+
+		await runImagesCommand(
+			{ getAllTools: () => [] } as never,
+			"colors 8",
+			ctx as never,
+			{ writeConfigFile: writer },
+		);
+
+		expect(
+			JSON.parse(readFileSync(join(testDir, "pi-chafa.json"), "utf8")),
+		).toStrictEqual({ version: DEFAULT_CONFIG.version, colors: "8" });
+		// The ladder still reaches the host value for the key nobody set.
+		expect(
+			resolveConfig({}, testDir, {
+				showImages: true,
+				imageWidthCells: 80,
+				images: null,
+			}).symbols.cellWidth,
+		).toBe(80);
+	});
+
+	it("keeps the file's own values when writing a different key (#058)", async () => {
+		writeFileSync(join(testDir, "pi-chafa.json"), JSON.stringify({ colors: "16" }));
+		const writer = vi.fn(writeConfigFile);
+		const ctx = {
+			mode: "tui",
+			hasUI: true,
+			ui: {
+				custom: vi.fn(),
+				select: vi.fn(),
+				notify: vi.fn(),
+				input: vi.fn(),
+			},
+		};
+
+		await runImagesCommand(
+			{ getAllTools: () => [] } as never,
+			"cellWidth 72",
+			ctx as never,
+			{ writeConfigFile: writer },
+		);
+
+		expect(
+			JSON.parse(readFileSync(join(testDir, "pi-chafa.json"), "utf8")),
+		).toStrictEqual({
+			version: DEFAULT_CONFIG.version,
+			colors: "16",
+			cellWidth: 72,
+		});
+	});
+
 	it("refuses a bad value without writing and without opening the panel (#050)", async () => {
 		const writer = vi.fn(writeConfigFile);
 		const notifyMock = vi.fn();
@@ -1880,6 +1947,30 @@ describe("runImagesCommand", () => {
 			`pi-chafa: 2 settings saved to ${testDir}/pi-chafa.json`,
 			"info",
 		);
+	});
+
+	it("writes the file's own keys plus the changed one on Ctrl+S, not the resolved config (#058)", async () => {
+		writeFileSync(join(testDir, "pi-chafa.json"), JSON.stringify({ dither: "ordered" }));
+		const realWrite = writeConfigFile;
+		const writeSpy = vi.fn((dir: string, cfg: unknown) =>
+			realWrite(dir, cfg as ChafaConfig),
+		);
+		const { run } = await mountPanel({
+			deps: { writeConfigFile: writeSpy },
+			simulate: (c) => {
+				c.handleInput("\r"); // cycle Prefer native → false: the one changed key
+				c.handleInput("\x13"); // Ctrl+S
+			},
+		});
+		await run;
+
+		expect(
+			JSON.parse(readFileSync(join(testDir, "pi-chafa.json"), "utf8")),
+		).toStrictEqual({
+			version: DEFAULT_CONFIG.version,
+			dither: "ordered", // the file's own key, kept
+			preferNative: false, // the key this save changed
+		});
 	});
 
 	it("a clean Ctrl+S closes without writing (#045)", async () => {

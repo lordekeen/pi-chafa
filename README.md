@@ -111,7 +111,7 @@ Either override is now honoured directly by pi-chafa, so `show_image` works even
 | `binaryPath` | string \| null | `null` | Explicit chafa path (overrides PATH). |
 | `timeoutMs` | integer | `8000` | Per-invocation wall-clock bound. |
 
-Unknown keys and invalid values are skipped silently. Copy `pi-chafa.example.json` for a commented starting point. `/images` edits this file for you.
+Unknown keys and invalid values are skipped silently. Copy `pi-chafa.example.json` for a commented starting point. `/images` edits this file for you — a save writes only the fields you changed (plus the ones the file already set), so pi's own `terminal.imageWidthCells` keeps supplying `cellWidth` until you set it here yourself.
 
 ## Environment variables
 
