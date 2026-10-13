@@ -12,12 +12,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DEFAULT_CONFIG, loadConfig, writeConfigFile } from "../src/config.js";
 import {
 	SETTING_DESCRIPTIONS,
+	IMAGES_USAGE,
 	applyMenuChange,
 	buildSettingItems,
 	collectRuntimeFacts,
 	defaultImagesDeps,
 	describeRuntime,
 	type ImagesCommandDeps,
+	nearMiss,
 	resolveRuntimeCaps,
 	runImagesCommand as runImagesCommandRaw,
 } from "../src/commands/images.js";
@@ -380,6 +382,23 @@ describe("collectRuntimeFacts + describeRuntime", () => {
 	});
 });
 
+describe("nearMiss (#055)", () => {
+	it("corrects typos, prefixes and trailing text", () => {
+		expect(nearMiss("statu")).toBe("status");
+		expect(nearMiss("STATU")).toBe("status");
+		expect(nearMiss("statsu")).toBe("status"); // transposition
+		expect(nearMiss("statuses")).toBe("status"); // extra text
+		expect(nearMiss(" status ")).toBeUndefined(); // trims to the exact token
+	});
+
+	it("stays silent rather than inventing a correction", () => {
+		expect(nearMiss("bogus")).toBeUndefined();
+		expect(nearMiss("st")).toBeUndefined(); // too short to guess from
+		expect(nearMiss("status")).toBeUndefined(); // not a miss at all
+		expect(nearMiss("")).toBeUndefined();
+	});
+});
+
 describe("runImagesCommand", () => {
 	let testDir: string;
 	const originalConfigDir = process.env.CHAFA_CONFIG_DIR;
@@ -684,6 +703,48 @@ describe("runImagesCommand", () => {
 			"warning",
 		);
 		expect(customMock).toHaveBeenCalledTimes(1);
+	});
+
+	it("names the usage and a near miss in the unknown-argument warning (#055)", async () => {
+		for (const [arg, corrected] of [
+			["statu", true],
+			["bogus", false],
+		] as const) {
+			const notifyMock = vi.fn();
+			const customMock = vi.fn().mockImplementation(async (cb) => {
+				cb(
+					{ requestRender: vi.fn() },
+					{
+						fg: (_c: string, text: string) => text,
+						bold: (text: string) => text,
+					},
+					getKeybindings(),
+					() => {},
+				);
+				return { action: "cancelled" };
+			});
+
+			await runImagesCommand({ getAllTools: () => [] } as never, arg, {
+				mode: "tui",
+				hasUI: true,
+				ui: {
+					custom: customMock,
+					select: vi.fn(),
+					notify: notifyMock,
+					input: vi.fn(),
+				},
+			} as never);
+
+			const [message, level] = notifyMock.mock.calls[0] as [string, string];
+			expect(level).toBe("warning");
+			expect(message).toContain("unknown /images argument");
+			expect(message).toContain(IMAGES_USAGE);
+			if (corrected) {
+				expect(message).toContain("did you mean '/images status'?");
+			} else {
+				expect(message).not.toContain("did you mean");
+			}
+		}
 	});
 
 	it("sanitizes control characters in an unknown argument before notifying (#016)", async () => {

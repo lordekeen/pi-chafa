@@ -172,6 +172,49 @@ function parsePositiveInt(value: string): number | undefined {
 	return Number.isInteger(parsed) && parsed > 0 ? parsed : undefined;
 }
 
+/** The command's one-line usage — the remedy every refusal has to name. */
+export const IMAGES_USAGE = "usage: /images [status]";
+
+/**
+ * Levenshtein distance, abandoned once it passes `max`: the only caller compares
+ * against a six-character token, so there is no reason to finish the matrix.
+ */
+function editDistanceAtMost(a: string, b: string, max: number): number {
+	if (Math.abs(a.length - b.length) > max) return max + 1;
+	let prev = Array.from({ length: b.length + 1 }, (_, i) => i);
+	for (let i = 1; i <= a.length; i++) {
+		const curr: number[] = [i];
+		let best = i;
+		for (let j = 1; j <= b.length; j++) {
+			const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+			const value = Math.min(
+				(prev[j] ?? 0) + 1,
+				(curr[j - 1] ?? 0) + 1,
+				(prev[j - 1] ?? 0) + cost,
+			);
+			curr[j] = value;
+			if (value < best) best = value;
+		}
+		if (best > max) return max + 1;
+		prev = curr;
+	}
+	return prev[b.length] ?? max + 1;
+}
+
+/**
+ * The near-miss correction for an unknown `/images` argument (#055): a typo, a
+ * prefix, or the accepted token followed by extra text. Returns the accepted
+ * token, or undefined when the argument is simply something else — a refusal
+ * must not invent a correction, and a two-character prefix is too little to go on.
+ */
+export function nearMiss(rawArg: string, known = "status"): string | undefined {
+	const arg = rawArg.trim().toLowerCase();
+	if (!arg || arg === known) return undefined;
+	if (arg.startsWith(known)) return known;
+	if (known.startsWith(arg) && arg.length >= 3) return known;
+	return editDistanceAtMost(arg, known, 2) <= 2 ? known : undefined;
+}
+
 /**
  * Build SettingItem rows for SettingsList (spec §4.2) with inline cycling values
  * and rich contextual descriptions.
@@ -523,8 +566,14 @@ export async function runImagesCommand(
 	if (arg !== "") {
 		// Sanitize before it reaches the TUI: the argument is user input and must
 		// never carry ANSI/control bytes into a notification (AGENTS.md invariant 3).
+		// The refusal also names the remedy — the usage line, plus a correction when
+		// the argument is a neighbour of the one accepted token (#055).
+		const shownArg = stripControls(rawArg);
+		const correction = nearMiss(shownArg);
 		ui.notify(
-			`pi-chafa: unknown /images argument '${stripControls(rawArg)}' — opening settings`,
+			`pi-chafa: unknown /images argument '${shownArg}' — opening settings\n${IMAGES_USAGE}${
+				correction ? `\ndid you mean '/images ${correction}'?` : ""
+			}`,
 			"warning",
 		);
 	}

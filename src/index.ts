@@ -18,7 +18,17 @@ export default function piChafaExtension(pi: ExtensionAPI): void {
 		handler: (args, ctx) => runImagesCommand(pi, args, ctx),
 		// #041: `status` is the only accepted argument; an empty prefix offers it,
 		// any other input matches nothing ([] = no suggestions, host contract).
+		// The description says what the argument does (#055) — the host command
+		// record has no hint field, so this is where discovery happens.
 		getArgumentCompletions: (prefix: string): AutocompleteItem[] =>
-			prefix.trim() === "" ? [{ value: "status", label: "status" }] : [],
+			prefix.trim() === ""
+				? [
+						{
+							value: "status",
+							label: "status",
+							description: "Print the runtime facts without opening the panel",
+						},
+					]
+				: [],
 	});
 }

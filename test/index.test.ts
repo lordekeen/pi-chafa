@@ -37,9 +37,14 @@ describe("piChafaExtension registration", () => {
 		const images = commands.get("images");
 		expect(images?.getArgumentCompletions).toBeTypeOf("function");
 		const completions = images?.getArgumentCompletions?.("") as
-			| Array<{ value: string; label: string }>
+			| Array<{ value: string; label: string; description?: string }>
 			| undefined;
-		expect(completions).toEqual([{ value: "status", label: "status" }]);
+		// The description is what tells the user what the argument does (#055); its
+		// exact wording is not pinned here so copy edits stay cheap.
+		expect(completions?.map((c) => [c.value, c.label])).toEqual([
+			["status", "status"],
+		]);
+		expect(completions?.[0]?.description).toBeTruthy();
 		const partial = images?.getArgumentCompletions?.("st") as unknown[];
 		expect(partial).toEqual([]);
 	});
