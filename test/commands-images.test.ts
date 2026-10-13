@@ -682,7 +682,7 @@ describe("runImagesCommand", () => {
 		expect(saved).not.toContain("\x1b");
 	});
 
-	it("closes the panel on lowercase q and documents it in the hint (#003)", async () => {
+	it("cancels the panel on lowercase q and documents it in the hint (#003, #048)", async () => {
 		const pi = { getAllTools: () => [] };
 		const doneMock = vi.fn();
 		let handleInput: ((data: string) => void) | undefined;
@@ -719,10 +719,10 @@ describe("runImagesCommand", () => {
 		expect(handleInput).toBeDefined();
 		expect(rendered.join("\n")).toContain("Esc/q close");
 		handleInput?.("q");
-		expect(doneMock).toHaveBeenCalledWith({ action: "done" });
+		expect(doneMock).toHaveBeenCalledWith({ action: "cancelled" });
 	});
 
-	it("closes the panel on uppercase Q (#003)", async () => {
+	it("cancels the panel on uppercase Q (#003, #048)", async () => {
 		const pi = { getAllTools: () => [] };
 		const doneMock = vi.fn();
 		let handleInput: ((data: string) => void) | undefined;
@@ -754,7 +754,7 @@ describe("runImagesCommand", () => {
 		await runImagesCommand(pi as never, "", ctx as never);
 
 		handleInput?.("Q");
-		expect(doneMock).toHaveBeenCalledWith({ action: "done" });
+		expect(doneMock).toHaveBeenCalledWith({ action: "cancelled" });
 	});
 
 	it("keeps the panel open for a non-exit key and still closes on q (#003)", async () => {
@@ -1101,6 +1101,23 @@ describe("runImagesCommand", () => {
 			simulate: (c) => {
 				c.handleInput("\r"); // cycle Prefer native → false
 				c.handleInput("\x1b"); // Esc: cancel
+			},
+		});
+		await run;
+		expect(readFileSync(join(testDir, "pi-chafa.json"), "utf8")).toBe(before);
+		expect(notifyMock).toHaveBeenCalledWith(
+			"pi-chafa: settings unchanged (cancelled)",
+			"info",
+		);
+	});
+
+	it("treats q as a reported cancel and leaves the file byte-identical (#048)", async () => {
+		writeFileSync(join(testDir, "pi-chafa.json"), JSON.stringify({ cellWidth: 71 }));
+		const before = readFileSync(join(testDir, "pi-chafa.json"), "utf8");
+		const { run, notifyMock } = await mountPanel({
+			simulate: (c) => {
+				c.handleInput("\r"); // cycle Prefer native → false: the draft is dirty
+				c.handleInput("q"); // must cancel AND report, never discard silently
 			},
 		});
 		await run;

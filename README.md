@@ -32,7 +32,7 @@ Run `/images` to tune defaults (including `timeoutMs`) and inspect the runtime e
 - <kbd>Enter</kbd> / <kbd>Space</kbd> — Cycle through presets inline (staged)
 - <kbd>e</kbd> — Open modal to type a custom value (staged)
 - <kbd>Ctrl</kbd>+<kbd>S</kbd> — Save the staged changes and close (the `Done` row does the same)
-- <kbd>Esc</kbd> / <kbd>q</kbd> — Discard the staged changes and close (the file stays untouched)
+- <kbd>Esc</kbd> / <kbd>q</kbd> — Discard the staged changes and close; both report `pi-chafa: settings unchanged (cancelled)` (the file stays untouched)
 
 `/images status` prints those runtime facts as a notification and returns without opening the panel. Any other argument warns and opens the panel (`show` / `reset` are **not** implemented yet).
 

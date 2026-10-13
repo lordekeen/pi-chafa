@@ -660,11 +660,12 @@ export async function runImagesCommand(
 							}
 						}
 
-						// 'q'/'Q' exits (README documents Esc / q; #003). Letter keys go
-						// through the host matcher so kitty-protocol input still lands
-						// on them (#041) — a raw compare would never fire for CSI-u.
+						// 'q'/'Q' is an exact alias of Esc (#048): it cancels and is reported,
+						// so a dirty draft is never discarded silently. Letter keys go through
+						// the host matcher so kitty-protocol input still lands on them (#041) —
+						// a raw compare would never fire for CSI-u.
 						if (matchesKey(data, "q") || matchesKey(data, "shift+q")) {
-							done({ action: "done" });
+							done({ action: "cancelled" });
 							return;
 						}
 
