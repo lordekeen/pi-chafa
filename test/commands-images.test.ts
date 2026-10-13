@@ -2070,10 +2070,65 @@ describe("runImagesCommand", () => {
 
 });
 
+	it("offers an explicit close entry as the fallback's last option (#059)", async () => {
+		// #054 removed the synthetic Done row because the TUI panel has Ctrl+S; the
+		// fallback builds its options from the same items, so it silently lost its
+		// only visible exit along with it. It cannot have Ctrl+S — no component is
+		// mounted to intercept a key — so the exit is an entry, in the position the
+		// removed row held.
+		const pi = { getAllTools: () => [] };
+		const notifyMock = vi.fn();
+		const writer = vi.fn();
+		const closeEntry = `Close — ${SETTING_DESCRIPTIONS.done}`;
+		const selectMock = vi.fn().mockResolvedValueOnce(closeEntry).mockResolvedValue(undefined);
+		const ctx = {
+			mode: "rpc",
+			hasUI: true,
+			ui: { select: selectMock, notify: notifyMock, input: vi.fn() },
+		};
+
+		await runImagesCommand(pi as never, "", ctx as never, {
+			writeConfigFile: writer,
+		});
+
+		expect((selectMock.mock.calls[0]?.[1] as string[]).at(-1)).toBe(closeEntry);
+		// One call: the entry itself exited the loop, rather than falling through to
+		// the next prompt (which would make it a row that does nothing).
+		expect(selectMock).toHaveBeenCalledTimes(1);
+		expect(writer).not.toHaveBeenCalled();
+	});
+
+	it("does not mistake a Co…-prefixed setting row for the close entry (#059)", async () => {
+		const pi = { getAllTools: () => [] };
+		const notifyMock = vi.fn();
+		const realWrite = writeConfigFile;
+		const writer = vi.fn((dir: string, cfg: unknown) =>
+			realWrite(dir, cfg as ChafaConfig),
+		);
+		const selectMock = vi
+			.fn()
+			.mockResolvedValueOnce(`Color mode: [240] — ${SETTING_DESCRIPTIONS.colors}`)
+			.mockResolvedValueOnce("8")
+			.mockResolvedValue(undefined);
+		const ctx = {
+			mode: "rpc",
+			hasUI: true,
+			ui: { select: selectMock, notify: notifyMock, input: vi.fn() },
+		};
+
+		await runImagesCommand(pi as never, "", ctx as never, {
+			writeConfigFile: writer,
+		});
+
+		expect(loadConfig(testDir).colors).toBe("8");
+	});
+
 	it("reaches the select flow in RPC mode instead of silently returning (#039)", async () => {
 		const pi = { getAllTools: () => [] };
+		// The entry that exits the flow is the close one (#059); #039's point is that
+		// the flow is reached at all, rather than the command returning silently.
 		const selectMock = vi.fn().mockResolvedValueOnce(
-			`Done — ${SETTING_DESCRIPTIONS.done}`,
+			`Close — ${SETTING_DESCRIPTIONS.done}`,
 		);
 		const customMock = vi.fn();
 		const notifyMock = vi.fn();

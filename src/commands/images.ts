@@ -77,8 +77,9 @@ export const SETTING_DESCRIPTIONS = {
 		"Chafa binary executable. Enter/Space toggles auto/path · Press 'e' to edit custom path.",
 	runtimeStatus:
 		"Inspect detected image protocols, host showImages setting, and chafa version.",
-	// The RPC/`select` fallback still offers a "Done" menu entry — a dialog option,
-	// not the synthetic row the panel used to carry (#054 removed that one).
+	// The RPC/`select` fallback appends a close entry built from this description
+	// (a dialog option, not the synthetic row the panel used to carry — #054 removed
+	// that one and #059 gave the fallback its own entry back).
 	done: "Close the settings panel",
 } as const;
 
@@ -1072,15 +1073,22 @@ export async function runImagesCommand(
 		// Fallback interface when ui.custom is not available: ui.select with descriptions & sub-selects
 		for (;;) {
 			const items = buildSettingItems(config, detectedBinary);
-			const options = items.map((item) => {
-				if (item.id === "done" || item.id === "runtimeStatus") {
-					return `${item.label} — ${item.description}`;
-				}
-				return `${item.label}: [${item.currentValue}] — ${item.description}`;
-			});
+			// The explicit close entry (#059). The TUI panel confirms with Ctrl+S; the
+			// fallback cannot — no component is mounted to intercept a key — so its exit
+			// is an option, in the position the removed Done row held. The copy comes
+			// from the constant so the sentence keeps one home.
+			const closeEntry = `Close — ${SETTING_DESCRIPTIONS.done}`;
+			const options = [
+				...items.map((item) =>
+					item.id === "runtimeStatus"
+						? `${item.label} — ${item.description}`
+						: `${item.label}: [${item.currentValue}] — ${item.description}`,
+				),
+				closeEntry,
+			];
 
 			const choice = await ui.select("pi-chafa settings", options);
-			if (!choice || choice.startsWith("Done")) return;
+			if (!choice || choice.startsWith("Close")) return;
 
 			if (choice.startsWith("Runtime status")) {
 				const facts = await buildRuntimeFacts(pi, config, agentDir, d);
