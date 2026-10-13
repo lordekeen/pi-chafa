@@ -1,7 +1,44 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import type { AutocompleteItem } from "@earendil-works/pi-tui";
-import { runImagesCommand } from "./commands/images.js";
+import {
+	resolveSettingKey,
+	runImagesCommand,
+	SETTING_ARG_VALUES,
+	SETTING_KEYS,
+	settingArgSummary,
+} from "./commands/images.js";
 import { buildShowImageTool } from "./show-image.js";
+
+/**
+ * Argument completion for `/images` (#050): the subcommand and every setting key
+ * before the first space, then that key's value ladder after it. Items carry the
+ * *whole* argument text, because the host replaces the whole argument prefix with
+ * the accepted item's `value` (pi-tui autocomplete.js applyCompletion).
+ */
+function completeImagesArgument(prefix: string): AutocompleteItem[] {
+	const text = prefix.trimStart();
+	const at = text.search(/\s/);
+	if (at === -1) {
+		return [
+			{
+				value: "status",
+				label: "status",
+				description: "Print the runtime facts without opening the panel",
+			},
+			...SETTING_KEYS.map((key) => ({
+				value: key,
+				label: key,
+				description: settingArgSummary(key),
+			})),
+		].filter((item) => item.value.toLowerCase().startsWith(text.toLowerCase()));
+	}
+	const canonical = resolveSettingKey(text.slice(0, at));
+	if (!canonical) return [];
+	const typed = text.slice(at + 1).toLowerCase();
+	return (SETTING_ARG_VALUES[canonical] ?? [])
+		.filter((value) => value.toLowerCase().startsWith(typed))
+		.map((value) => ({ value: `${canonical} ${value}`, label: value }));
+}
 
 /**
  * pi-chafa extension entrypoint.
@@ -16,19 +53,8 @@ export default function piChafaExtension(pi: ExtensionAPI): void {
 		description:
 			"Tune pi-chafa defaults and inspect runtime image/terminal status",
 		handler: (args, ctx) => runImagesCommand(pi, args, ctx),
-		// #041: `status` is the only accepted argument; an empty prefix offers it,
-		// any other input matches nothing ([] = no suggestions, host contract).
-		// The description says what the argument does (#055) — the host command
-		// record has no hint field, so this is where discovery happens.
-		getArgumentCompletions: (prefix: string): AutocompleteItem[] =>
-			prefix.trim() === ""
-				? [
-						{
-							value: "status",
-							label: "status",
-							description: "Print the runtime facts without opening the panel",
-						},
-					]
-				: [],
+		// #050: the first token completes to `status` or a setting key, the second to
+		// that key's values — so the grammar is discoverable without the panel.
+		getArgumentCompletions: completeImagesArgument,
 	});
 }

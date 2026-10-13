@@ -35,7 +35,15 @@ Run `/images` to tune defaults (including `timeoutMs`) and inspect the runtime e
 - Mouse — click a row to move the selection, click it again to cycle or open it (the list's own affordances: press selects, click activates)
 - <kbd>Esc</kbd> / <kbd>q</kbd> — Discard the staged changes and close; both report `pi-chafa: settings unchanged (cancelled)` (the file stays untouched)
 
-`/images status` prints those runtime facts as a notification and returns without opening the panel. Any other argument warns and opens the panel (`show` / `reset` are **not** implemented yet).
+`/images status` prints those runtime facts without opening the panel. `/images <key> <value>` sets one setting directly, writes the file once, and reports the new value and the file it wrote — this is the form that works where no panel can open (`print`/`json`):
+
+```sh
+/images colors 256
+/images cellWidth 72
+/images binaryPath /opt/homebrew/bin/chafa
+```
+
+Keys (matched case-insensitively): `preferNative` (`true`/`false`, or no value to toggle), `colors` (`none`/`2`/`8`/`16`/`240`/`256`/`full`), `dither` (`none`/`ordered`/`diffusion`/`noise`), `symbolsSet` (e.g. `block+border`), `cellWidth`, `maxRows`, `timeoutMs`, and `binaryPath` (empty clears it back to the system `PATH`). <kbd>Tab</kbd> completes the subcommand, the key names, and each key's preset values. An unknown key warns and opens the panel; a value that fails validation is refused with the reason and nothing is written (`show` / `reset` are **not** implemented yet).
 
 ## Subagents and vision
 

@@ -12,6 +12,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DEFAULT_CONFIG, loadConfig, writeConfigFile } from "../src/config.js";
 import {
 	SETTING_DESCRIPTIONS,
+	SETTING_KEYS,
 	IMAGES_USAGE,
 	applyMenuChange,
 	buildSettingItems,
@@ -20,6 +21,7 @@ import {
 	describeRuntime,
 	type ImagesCommandDeps,
 	nearMiss,
+	parseSettingArg,
 	resolveRuntimeCaps,
 	runImagesCommand as runImagesCommandRaw,
 	runtimeStatusSubmenu,
@@ -288,6 +290,92 @@ describe("applyMenuChange", () => {
 
 	it("returns null for an unknown menu choice", () => {
 		expect(applyMenuChange(base, "Nope", "")).toBeNull();
+	});
+});
+
+describe("parseSettingArg (#050)", () => {
+	it("accepts a valid value for every setting key", () => {
+		const cases: Array<[string, string, Partial<ChafaConfig>]> = [
+			["preferNative", "true", { preferNative: true }],
+			["colors", "8", { colors: "8" }],
+			["dither", "ordered", { dither: "ordered" }],
+			["symbolsSet", "block", { symbolsSet: "block" }],
+			["cellWidth", "72", { cellWidth: 72 }],
+			["maxRows", "40", { maxRows: 40 }],
+			["timeoutMs", "5000", { timeoutMs: 5000 }],
+			["binaryPath", "/opt/chafa", { binaryPath: "/opt/chafa" }],
+		];
+		// The table is only complete while it covers the whole accepted key set.
+		expect(cases.map(([key]) => key)).toEqual([...SETTING_KEYS]);
+		for (const [key, value, expected] of cases) {
+			const result = parseSettingArg(DEFAULT_CONFIG, key, value);
+			expect(result.ok).toBe(true);
+			if (result.ok) expect(result.next).toMatchObject(expected);
+		}
+	});
+
+	it("matches the key case-insensitively", () => {
+		const result = parseSettingArg(DEFAULT_CONFIG, "CellWidth", "72");
+		expect(result.ok).toBe(true);
+		if (result.ok) expect(result.next.cellWidth).toBe(72);
+	});
+
+	it("toggles preferNative and clears binaryPath when no value is given", () => {
+		const toggled = parseSettingArg(DEFAULT_CONFIG, "preferNative", "");
+		expect(toggled.ok).toBe(true);
+		if (toggled.ok) {
+			expect(toggled.next.preferNative).toBe(!DEFAULT_CONFIG.preferNative);
+		}
+		const cleared = parseSettingArg(
+			{ ...DEFAULT_CONFIG, binaryPath: "/opt/chafa" },
+			"binaryPath",
+			"",
+		);
+		expect(cleared.ok).toBe(true);
+		if (cleared.ok) expect(cleared.next.binaryPath).toBeNull();
+	});
+
+	it("rejects a bad value with the field's own reason", () => {
+		const cases: Array<[string, string, string]> = [
+			["preferNative", "maybe", "true or false"],
+			["colors", "chartreuse", "expected one of"],
+			["dither", "bayer", "expected one of"],
+			["symbolsSet", "   ", "non-empty"],
+			["cellWidth", "0", "positive integer"],
+			["cellWidth", "abc", "positive integer"],
+			["maxRows", "-3", "positive integer"],
+			["timeoutMs", "1.5", "positive integer"],
+		];
+		for (const [key, value, needle] of cases) {
+			const result = parseSettingArg(DEFAULT_CONFIG, key, value);
+			expect(result.ok).toBe(false);
+			if (!result.ok) {
+				expect(result.reason).toContain(key);
+				expect(result.reason).toContain(needle);
+			}
+		}
+	});
+
+	it("names the accepted keys for an unknown setting", () => {
+		const result = parseSettingArg(DEFAULT_CONFIG, "colours", "8");
+		expect(result.ok).toBe(false);
+		if (!result.ok) {
+			expect(result.reason).toContain("colours");
+			for (const key of SETTING_KEYS) expect(result.reason).toContain(key);
+		}
+	});
+
+	it("refuses a value carrying control characters instead of storing them (invariant 3)", () => {
+		const result = parseSettingArg(DEFAULT_CONFIG, "symbolsSet", "\u001b[31mblock");
+		expect(result.ok).toBe(false);
+		if (!result.ok) expect(result.reason).not.toContain("\u001b");
+	});
+
+	it("never mutates the config it was given", () => {
+		const before = structuredClone(DEFAULT_CONFIG);
+		parseSettingArg(DEFAULT_CONFIG, "cellWidth", "72");
+		parseSettingArg(DEFAULT_CONFIG, "colors", "chartreuse");
+		expect(DEFAULT_CONFIG).toEqual(before);
 	});
 });
 
@@ -825,6 +913,190 @@ describe("runImagesCommand", () => {
 			expect(customMock).not.toHaveBeenCalled();
 			expect(notifyMock).toHaveBeenCalledTimes(1);
 		}
+	});
+
+	it("sets any of the eight settings from one command-line argument (#050)", async () => {
+		const writer = vi.fn(writeConfigFile);
+		const notifyMock = vi.fn();
+		const customMock = vi.fn();
+		const ctx = {
+			mode: "tui",
+			hasUI: true,
+			ui: {
+				custom: customMock,
+				select: vi.fn(),
+				notify: notifyMock,
+				input: vi.fn(),
+			},
+		};
+		const cases: Array<[string, keyof ChafaConfig, unknown]> = [
+			["preferNative true", "preferNative", true],
+			["colors 8", "colors", "8"],
+			["dither ordered", "dither", "ordered"],
+			["symbolsSet block", "symbolsSet", "block"],
+			["cellWidth 72", "cellWidth", 72],
+			["maxRows 40", "maxRows", 40],
+			["timeoutMs 5000", "timeoutMs", 5000],
+			["binaryPath /opt/chafa", "binaryPath", "/opt/chafa"],
+		];
+
+		for (const [args, key, expected] of cases) {
+			writer.mockClear();
+			notifyMock.mockClear();
+			await runImagesCommand({ getAllTools: () => [] } as never, args, ctx as never, {
+				writeConfigFile: writer,
+			});
+			// Exactly one write, and a report naming the key, the new value and the file.
+			expect(writer).toHaveBeenCalledTimes(1);
+			expect(loadConfig(testDir)[key]).toEqual(expected);
+			expect(notifyMock).toHaveBeenCalledTimes(1);
+			expect(notifyMock).toHaveBeenCalledWith(
+				`pi-chafa: ${key} is now ${expected} — saved to ${testDir}/pi-chafa.json`,
+				"info",
+			);
+		}
+		// A complete key/value argument is a finished command — it never mounts the panel.
+		expect(customMock).not.toHaveBeenCalled();
+	});
+
+	it("refuses a bad value without writing and without opening the panel (#050)", async () => {
+		const writer = vi.fn(writeConfigFile);
+		const notifyMock = vi.fn();
+		const customMock = vi.fn();
+
+		await runImagesCommand(
+			{ getAllTools: () => [] } as never,
+			"colors chartreuse",
+			{
+				mode: "tui",
+				hasUI: true,
+				ui: {
+					custom: customMock,
+					select: vi.fn(),
+					notify: notifyMock,
+					input: vi.fn(),
+				},
+			} as never,
+			{ writeConfigFile: writer },
+		);
+
+		expect(notifyMock).toHaveBeenCalledTimes(1);
+		const [message, level] = notifyMock.mock.calls[0] as [string, string];
+		expect(level).toBe("warning");
+		expect(message).toContain("invalid colors = 'chartreuse'");
+		expect(message).toContain("expected one of");
+		expect(writer).not.toHaveBeenCalled();
+		expect(customMock).not.toHaveBeenCalled();
+		expect(loadConfig(testDir).colors).toBe(DEFAULT_CONFIG.colors);
+	});
+
+	it("keeps the unknown-argument fallback: warn with the keys, no write, open the panel (#050)", async () => {
+		const writer = vi.fn(writeConfigFile);
+		const notifyMock = vi.fn();
+		const customMock = vi.fn().mockImplementation(async (cb) => {
+			cb(
+				{ requestRender: vi.fn() },
+				{
+					fg: (_c: string, text: string) => text,
+					bold: (text: string) => text,
+				},
+				getKeybindings(),
+				() => {},
+			);
+			return { action: "done" };
+		});
+
+		await runImagesCommand(
+			{ getAllTools: () => [] } as never,
+			"colours 8",
+			{
+				mode: "tui",
+				hasUI: true,
+				ui: {
+					custom: customMock,
+					select: vi.fn(),
+					notify: notifyMock,
+					input: vi.fn(),
+				},
+			} as never,
+			{ writeConfigFile: writer },
+		);
+
+		const [message, level] = notifyMock.mock.calls[0] as [string, string];
+		expect(level).toBe("warning");
+		expect(message).toContain("unknown /images argument 'colours 8'");
+		for (const key of SETTING_KEYS) expect(message).toContain(key);
+		expect(writer).not.toHaveBeenCalled();
+		expect(customMock).toHaveBeenCalledTimes(1);
+	});
+
+	it("reports a command-line write to stdout in print and to stderr in json (#050)", async () => {
+		const writer = vi.fn(writeConfigFile);
+		const stdoutSpy = vi
+			.spyOn(process.stdout, "write")
+			.mockImplementation(() => true);
+		const stderrSpy = vi
+			.spyOn(process.stderr, "write")
+			.mockImplementation(() => true);
+		const ctx = (mode: string) => ({
+			mode,
+			hasUI: false,
+			ui: { custom: vi.fn(), select: vi.fn(), notify: vi.fn(), input: vi.fn() },
+		});
+		try {
+			await runImagesCommand(
+				{ getAllTools: () => [] } as never,
+				"cellWidth 71",
+				ctx("print") as never,
+				{ writeConfigFile: writer },
+			);
+			expect(stdoutSpy).toHaveBeenCalledWith(
+				`pi-chafa: cellWidth is now 71 — saved to ${testDir}/pi-chafa.json\n`,
+			);
+			stdoutSpy.mockClear();
+
+			await runImagesCommand(
+				{ getAllTools: () => [] } as never,
+				"maxRows 40",
+				ctx("json") as never,
+				{ writeConfigFile: writer },
+			);
+			// stdout is a JSONL stream in json mode — the report goes to stderr.
+			expect(stdoutSpy).not.toHaveBeenCalled();
+			expect(stderrSpy).toHaveBeenCalledWith(
+				`pi-chafa: maxRows is now 40 — saved to ${testDir}/pi-chafa.json\n`,
+			);
+		} finally {
+			stdoutSpy.mockRestore();
+			stderrSpy.mockRestore();
+		}
+		expect(loadConfig(testDir).cellWidth).toBe(71);
+		expect(loadConfig(testDir).maxRows).toBe(40);
+	});
+
+	it("refuses a control-character value and never echoes it raw (#050)", async () => {
+		const writer = vi.fn(writeConfigFile);
+		const notifyMock = vi.fn();
+
+		await runImagesCommand(
+			{ getAllTools: () => [] } as never,
+			"symbolsSet \u001b[31mblock",
+			{
+				mode: "tui",
+				hasUI: true,
+				ui: {
+					custom: vi.fn(),
+					select: vi.fn(),
+					notify: notifyMock,
+					input: vi.fn(),
+				},
+			} as never,
+			{ writeConfigFile: writer },
+		);
+
+		const [message] = notifyMock.mock.calls[0] as [string, string];
+		expect(message).not.toContain("\u001b");
+		expect(writer).not.toHaveBeenCalled();
 	});
 
 	it("uses the injected deps instead of spawning chafa or reading real settings (#019)", async () => {
@@ -1735,7 +2007,7 @@ describe("runImagesCommand", () => {
 		}
 	});
 
-	it("tells print users the panel is interactive-only and spawns no probe (#039)", async () => {
+	it("tells print users what still works and spawns no probe (#039, #050)", async () => {
 		const pi = { getAllTools: () => [] };
 		const probe = vi.fn(async () => FAKE_PROBE);
 		const writeSpy = vi
@@ -1758,7 +2030,8 @@ describe("runImagesCommand", () => {
 				{ probeChafa: probe },
 			);
 			const [text] = writeSpy.mock.calls[0] as [string];
-			expect(text).toContain("interactive-only");
+			// After #050 the message advertises the form that *does* work headless.
+			expect(text).toContain("/images <key> <value>");
 			expect(text).toContain("/images status");
 			expect(probe).not.toHaveBeenCalled();
 		} finally {

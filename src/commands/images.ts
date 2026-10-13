@@ -26,7 +26,7 @@ import {
 	writeConfigFile,
 } from "../config.js";
 import { type ImageEnv, isTmux, resolveCapsImages } from "../detect.js";
-import { stripControls } from "../sanitize.js";
+import { hasControlChars, stripControls } from "../sanitize.js";
 import {
 	type AgentCapsImages,
 	type ChafaConfig,
@@ -175,7 +175,7 @@ function parsePositiveInt(value: string): number | undefined {
 }
 
 /** The command's one-line usage — the remedy every refusal has to name. */
-export const IMAGES_USAGE = "usage: /images [status]";
+export const IMAGES_USAGE = "usage: /images [status | <key> <value>]";
 
 /**
  * Levenshtein distance, abandoned once it passes `max`: the only caller compares
@@ -551,7 +551,7 @@ type WizardAction =
 	| { action: "edit" };
 
 /** The eight user-settable fields of pi-chafa.json (spec §6.1), for staged-change counting (#045). */
-const SETTING_KEYS = [
+export const SETTING_KEYS = [
 	"preferNative",
 	"colors",
 	"dither",
@@ -561,6 +561,107 @@ const SETTING_KEYS = [
 	"timeoutMs",
 	"binaryPath",
 ] as const;
+
+/** A user-settable field of pi-chafa.json (spec §6.1). */
+export type SettingKey = (typeof SETTING_KEYS)[number];
+
+/**
+ * What a valid value looks like, per key (#050). Used verbatim as the tail of a
+ * command-line refusal ("expected …"), so it must complete that sentence.
+ * binaryPath never rejects (any path is valid, empty clears it) — its entry is
+ * documentation, kept so the record stays exhaustive by construction.
+ */
+const SETTING_ARG_REASONS = {
+	preferNative: "true or false (or no value to toggle)",
+	colors: `one of ${COLOR_MODES.join(", ")}`,
+	dither: `one of ${DITHER_MODES.join(", ")}`,
+	symbolsSet: "a non-empty symbols set",
+	cellWidth: "a positive integer",
+	maxRows: "a positive integer",
+	timeoutMs: "a positive integer",
+	binaryPath: "any path (empty clears it)",
+} satisfies Record<SettingKey, string>;
+
+/** Values offered for the second token of `/images <key> <value>` (#050); binaryPath is free-form. */
+export const SETTING_ARG_VALUES: Partial<
+	Record<SettingKey, readonly string[]>
+> = {
+	preferNative: ["true", "false"],
+	colors: COLOR_MODES,
+	dither: DITHER_MODES,
+	symbolsSet: SYMBOL_PRESETS,
+	cellWidth: WIDTH_PRESETS,
+	maxRows: ROW_PRESETS,
+	timeoutMs: TIMEOUT_PRESETS,
+};
+
+/**
+ * Short command-line copy per key (#050). The panel's own descriptions name panel
+ * keys ("Enter/Space cycles · Press 'e' …"), so the two surfaces keep their own
+ * copy rather than one being edited out of the other.
+ */
+const SETTING_ARG_SUMMARIES = {
+	preferNative: "Prefer native Kitty/iTerm2 protocols when supported",
+	colors:
+		"Chafa color mode: full (24-bit truecolor), 256, 240, 16, 8, 2, or none",
+	dither: "Chafa dithering algorithm: none, ordered, diffusion, or noise",
+	symbolsSet: "Chafa symbol classes (e.g. block+border, ascii, braille)",
+	cellWidth: "Width in terminal columns",
+	maxRows: "Row height limit cap",
+	timeoutMs: "Per-invocation chafa wall-clock limit in ms",
+	binaryPath: "Chafa binary executable (empty clears it back to PATH)",
+} satisfies Record<SettingKey, string>;
+
+/** One-line description of a key for the command-line surface (completion copy). */
+export function settingArgSummary(key: SettingKey): string {
+	return SETTING_ARG_SUMMARIES[key];
+}
+
+/** Canonical key for a user-typed token, or undefined when it names no setting. */
+export function resolveSettingKey(raw: string): SettingKey | undefined {
+	const lower = raw.toLowerCase();
+	return SETTING_KEYS.find((key) => key.toLowerCase() === lower);
+}
+
+/** Result of one `/images <key> <value>` attempt (#050). */
+export type SettingArgResult =
+	| { ok: true; next: ChafaConfig }
+	| { ok: false; reason: string };
+
+/**
+ * Pure parse + validation for `/images <key> <value>` (#050). The value rules
+ * stay in `applyMenuChange` (their single home); this turns a rejection into the
+ * caller's copy. A value carrying control characters is refused rather than
+ * stripped: it would be persisted and then rendered in the panel's rows, and a
+ * silently stripped path is a different path than the user typed (invariant 3).
+ */
+export function parseSettingArg(
+	current: ChafaConfig,
+	key: string,
+	value: string,
+): SettingArgResult {
+	const canonical = resolveSettingKey(key);
+	if (!canonical) {
+		return {
+			ok: false,
+			reason: `unknown setting '${stripControls(key)}' — accepted: ${SETTING_KEYS.join(", ")}`,
+		};
+	}
+	if (hasControlChars(value)) {
+		return {
+			ok: false,
+			reason: `invalid ${canonical} value (control characters are not allowed)`,
+		};
+	}
+	const next = applyMenuChange(current, canonical, value);
+	if (!next) {
+		return {
+			ok: false,
+			reason: `invalid ${canonical} = '${stripControls(value)}' (expected ${SETTING_ARG_REASONS[canonical]})`,
+		};
+	}
+	return { ok: true, next };
+}
 
 /** Number of settings that differ between two configs (field-by-field, #045). */
 function countChanges(a: ChafaConfig, b: ChafaConfig): number {
@@ -620,6 +721,43 @@ const EDITABLE_FIELDS: Array<{
 ];
 
 /**
+ * Split `/images <key> <value…>` at the first whitespace run: the key is the first
+ * token, the value is everything after it (a binaryPath may contain spaces), and
+ * the value is trimmed at its ends.
+ */
+function splitSettingArg(raw: string): { key: string; value: string } {
+	const at = raw.search(/\s/);
+	return at === -1
+		? { key: raw, value: "" }
+		: { key: raw.slice(0, at), value: raw.slice(at + 1).trim() };
+}
+
+/** The value as the panel's own rows show it (binaryPath null reads as auto). */
+function settingValueText(key: SettingKey, config: ChafaConfig): string {
+	const value = config[key];
+	return value === null ? "(auto on PATH)" : String(value);
+}
+
+/**
+ * Deliver command output on the channel the mode owns (#039, #050): a notification
+ * where a UI exists, else the mode's stream — stdout in print, stderr in json,
+ * where stdout is a JSONL event stream.
+ */
+function reportCommandText(
+	ctx: Pick<ExtensionCommandContext, "mode" | "hasUI">,
+	ui: Pick<ExtensionUIContext, "notify">,
+	text: string,
+	severity: "info" | "warning",
+): void {
+	if (ctx.mode === "tui" || ctx.hasUI) {
+		ui.notify(text, severity);
+		return;
+	}
+	const sink = ctx.mode === "json" ? process.stderr : process.stdout;
+	sink.write(`${text}\n`);
+}
+
+/**
  * Interactive wizard: pick or cycle settings inline with descriptions,
  * persist immediately (spec §4.2).
  */
@@ -634,34 +772,48 @@ export async function runImagesCommand(
 	const agentDir = getConfigDir();
 	let config = loadConfig(agentDir);
 
-	// Argument surface (#016 partial, decision D5): `status` prints the runtime
-	// facts and returns without opening the panel; an unknown argument warns and
-	// then opens the panel, which keeps this forward-compatible with the deferred
-	// show/open/reset subcommands. No argument = the interactive panel.
+	// Argument surface (#016 partial, decision D5, #050 complete): `status` prints
+	// the runtime facts; `<key> <value>` sets exactly one setting and returns — both
+	// work headless and neither opens the panel. An unknown key warns (usage, the
+	// accepted keys, a near miss) and then opens the panel, which keeps this
+	// forward-compatible with the deferred show/open/reset subcommands.
 	const rawArg = typeof args === "string" ? args.trim() : "";
 	const arg = rawArg.toLowerCase();
 	if (arg === "status") {
 		const facts = await buildRuntimeFacts(pi, config, agentDir, d);
-		const lines = describeRuntime(facts).join("\n");
-		// TUI and RPC notify; print/json write to the mode's channel — stdout in
-		// print, stderr in json, where stdout must stay a clean JSONL stream (#039).
-		if (ctx.mode === "tui" || ctx.hasUI) {
-			ui.notify(lines, "info");
-		} else {
-			const sink = ctx.mode === "json" ? process.stderr : process.stdout;
-			sink.write(`${lines}\n`);
-		}
+		reportCommandText(ctx, ui, describeRuntime(facts).join("\n"), "info");
 		return;
 	}
-	if (arg !== "") {
-		// Sanitize before it reaches the TUI: the argument is user input and must
-		// never carry ANSI/control bytes into a notification (AGENTS.md invariant 3).
-		// The refusal also names the remedy — the usage line, plus a correction when
-		// the argument is a neighbour of the one accepted token (#055).
+	if (rawArg !== "") {
+		const split = splitSettingArg(rawArg);
+		const canonical = resolveSettingKey(split.key);
+		if (canonical) {
+			const parsed = parseSettingArg(config, canonical, split.value);
+			if (!parsed.ok) {
+				// A real key with a bad value is a finished command: refuse, do not write,
+				// and do not open the panel — the reason is the whole remedy.
+				reportCommandText(ctx, ui, `pi-chafa: ${parsed.reason}`, "warning");
+				return;
+			}
+			d.writeConfigFile(agentDir, parsed.next);
+			reportCommandText(
+				ctx,
+				ui,
+				`pi-chafa: ${canonical} is now ${settingValueText(canonical, parsed.next)} — saved to ${agentDir}/pi-chafa.json`,
+				"info",
+			);
+			return;
+		}
+		// Unknown key: sanitize before it reaches the TUI (the argument is user input
+		// and must never carry ANSI/control bytes into a notification, invariant 3), and
+		// name the remedy — the usage line, the accepted keys, plus a correction when the
+		// argument is a neighbour of the one accepted subcommand (#055).
 		const shownArg = stripControls(rawArg);
 		const correction = nearMiss(shownArg);
-		ui.notify(
-			`pi-chafa: unknown /images argument '${shownArg}' — opening settings\n${IMAGES_USAGE}${
+		reportCommandText(
+			ctx,
+			ui,
+			`pi-chafa: unknown /images argument '${shownArg}' — opening settings\n${IMAGES_USAGE}\nkeys: ${SETTING_KEYS.join(", ")}${
 				correction ? `\ndid you mean '/images ${correction}'?` : ""
 			}`,
 			"warning",
@@ -1072,9 +1224,9 @@ export async function runImagesCommand(
 		}
 	}
 
-	// print/json: no dialogs, no custom component, no probe — say so.
+	// print/json: no dialogs, no custom component, no probe — say what still works.
 	const sink = ctx.mode === "json" ? process.stderr : process.stdout;
 	sink.write(
-		"pi-chafa: /images settings are interactive-only — run '/images status' for the runtime facts\n",
+		"pi-chafa: no panel here — set one setting with '/images <key> <value>' (e.g. '/images colors 256'), or run '/images status' for the runtime facts\n",
 	);
 }

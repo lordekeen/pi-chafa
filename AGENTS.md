@@ -36,7 +36,7 @@ The spec is **authoritative, but not frozen**. A change that contradicts the spe
 | [`src/detect.ts`](src/detect.ts) | Delivery decision engine implementing spec §7.2 matrix (native vs symbols vs none), and the effective image capability resolution (spec §6.4 ladder) via [`resolveCapsImages`](src/detect.ts). |
 | [`src/images.ts`](src/images.ts) | Path and glob expansion, magic byte sniffing for MIME types, and file reading. |
 | [`src/show-image.ts`](src/show-image.ts) | The `show_image` tool definition, execution loop, no-UI degradation, and custom TUI renderers. |
-| [`src/commands/images.ts`](src/commands/images.ts) | `/images` slash command panel, terminal capability inspector, and interactive settings menu. |
+| [`src/commands/images.ts`](src/commands/images.ts) | `/images` slash command: terminal capability inspector, interactive settings panel, and the headless argument surface (`status` / `<key> <value>`, so every setting is reachable without dialogs — #050). |
 | [`skills/pi-chafa/SKILL.md`](skills/pi-chafa/SKILL.md) | Bundled skill auto-discovered by pi, guiding models on when to call `show_image`. |
 | [`scripts/smoke.mjs`](scripts/smoke.mjs) | Opt-in real-dependency smoke runner (`npm run test:smoke`): builds `dist/` then drives it against the real chafa binary, the real filesystem, and the real capability ladder. Not published — `scripts/` is outside the `files` allowlist. |
 | [`.github/workflows/ci.yml`](.github/workflows/ci.yml) | The four hermetic gates on push and pull requests, plus the optional smoke job against a real chafa + ImageMagick (#043). |
