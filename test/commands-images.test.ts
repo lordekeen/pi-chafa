@@ -17,6 +17,7 @@ import {
 	applyMenuChange,
 	buildSettingItems,
 	collectRuntimeFacts,
+	controlCharReason,
 	defaultImagesDeps,
 	describeRuntime,
 	type ImagesCommandDeps,
@@ -1328,7 +1329,45 @@ describe("runImagesCommand", () => {
 		const messages = notifyMock.mock.calls.map((call) => call[0] as string);
 		expect(messages.some((m) => m.includes("saved binaryPath"))).toBe(false);
 		expect(writer).not.toHaveBeenCalled();
+		expect(notifyMock).toHaveBeenCalledWith(
+			`pi-chafa: ${controlCharReason("binaryPath")}`,
+			"warning",
+		);
 		for (const message of messages) expect(message).not.toContain("\x1b");
+	});
+
+	it("saves a clean binaryPath in the fallback and reports it (#038)", async () => {
+		const pi = { getAllTools: () => [] };
+		const notifyMock = vi.fn();
+		const realWrite = writeConfigFile;
+		const writer = vi.fn((dir: string, cfg: unknown) =>
+			realWrite(dir, cfg as ChafaConfig),
+		);
+		const selectMock = vi
+			.fn()
+			.mockResolvedValueOnce(
+				`Binary path: (auto on PATH) — ${SETTING_DESCRIPTIONS.binaryPath}`,
+			)
+			.mockResolvedValueOnce("Type custom path...")
+			.mockResolvedValueOnce(`Done — ${SETTING_DESCRIPTIONS.done}`);
+		const inputMock = vi.fn().mockResolvedValueOnce("/opt/chafa");
+		const ctx = {
+			mode: "rpc",
+			hasUI: true,
+			ui: { select: selectMock, notify: notifyMock, input: inputMock },
+		};
+
+		await runImagesCommand(pi as never, "", ctx as never, {
+			writeConfigFile: writer,
+		});
+
+		const messages = notifyMock.mock.calls.map((call) => call[0] as string);
+		expect(messages.some((m) => m.includes("saved binaryPath"))).toBe(true);
+		expect(loadConfig(testDir).binaryPath).toBe("/opt/chafa");
+		expect(notifyMock).not.toHaveBeenCalledWith(
+			expect.stringContaining("control characters"),
+			"warning",
+		);
 	});
 
 	it("cancels the panel on lowercase q and documents it in the hint (#003, #048)", async () => {
@@ -1977,6 +2016,35 @@ describe("runImagesCommand", () => {
 		expect(writeSpy).not.toHaveBeenCalled();
 		expect(notifyMock).toHaveBeenCalledWith(
 			"pi-chafa: invalid symbolsSet (cannot be empty)",
+			"warning",
+		);
+	});
+
+	it("refuses a control-character 'e' value with the refusal copy and stages nothing (#060)", async () => {
+		// binaryPath used to be the silently-accepted case: its field has no
+		// validator copy at all, so the panel's `else if (field.invalid !== null)`
+		// stayed quiet and the escape bytes reached the file, which the next panel
+		// open renders back into the row's currentValue (invariant 3).
+		const realWrite = writeConfigFile;
+		const writeSpy = vi.fn((dir: string, cfg: unknown) =>
+			realWrite(dir, cfg as ChafaConfig),
+		);
+		const { run, notifyMock } = await mountPanel({
+			deps: { writeConfigFile: writeSpy },
+			input: () => "ascii\x1b[31m",
+			select: () => "Symbols set",
+			simulate: (c, mount) => {
+				if (mount === 1) {
+					c.handleInput("e"); // picker → Symbols set → the refused value
+				} else {
+					c.handleInput("\x13"); // Ctrl+S: would persist it if it had staged
+				}
+			},
+		});
+		await run;
+		expect(writeSpy).not.toHaveBeenCalled();
+		expect(notifyMock).toHaveBeenCalledWith(
+			`pi-chafa: ${controlCharReason("symbolsSet")}`,
 			"warning",
 		);
 	});

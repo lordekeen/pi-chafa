@@ -511,22 +511,40 @@ async function probeToFact(
 }
 
 /**
+ * Refusal copy for a dialog-staged value (#060). `applyMenuChange` is the
+ * enforcement; this is only the sentence, shared by both dialog paths so the
+ * same rejection reads the same way: the control-character sentence when that is
+ * what refused the value, else the field's own copy from `EDITABLE_FIELDS`
+ * (which is why that table is the copy's home), else a generic line.
+ */
+function refusalText(id: string, value: string): string {
+	if (hasControlChars(value)) return `pi-chafa: ${controlCharReason(id)}`;
+	const copy = EDITABLE_FIELDS.find((field) => field.id === id)?.invalid;
+	return copy ?? `pi-chafa: invalid ${id} value`;
+}
+
+/**
  * Apply one menu choice, persist it, and emit the caller's notification
- * (spec §4.2). Returns the updated config, or null when the value was invalid
- * (callers warn / re-prompt). Message text is supplied by the caller so every
+ * (spec §4.2). Returns the updated config, or null when the value was invalid —
+ * which is reported rather than swallowed, because a dialog that does nothing
+ * reads as a broken key (#039). Message text is supplied by the caller so every
  * notification stays byte-identical to the hand-written flow it replaces.
  */
 function persistSetting(
 	config: ChafaConfig,
 	agentDir: string,
 	ui: Pick<ExtensionUIContext, "notify">,
+	write: ImagesCommandDeps["writeConfigFile"],
 	id: string,
 	value: string,
 	message: (next: ChafaConfig) => string,
 ): ChafaConfig | null {
 	const next = applyMenuChange(config, id, value);
-	if (!next) return null;
-	writeConfigFile(agentDir, next);
+	if (!next) {
+		ui.notify(refusalText(id, value), "warning");
+		return null;
+	}
+	write(agentDir, next);
 	// Sanitize at the single notification funnel: every template (generic
 	// "updated to", binaryPath, symbolsSet) carries user-entered values, and
 	// invariant 3 requires no raw control bytes reach the TUI (#038).
@@ -1029,8 +1047,7 @@ export async function runImagesCommand(
 					if (value !== undefined) {
 						const next = applyMenuChange(draft, field.id, value);
 						if (next) draft = next;
-						else if (field.invalid !== null)
-							ui.notify(field.invalid, "warning");
+						else ui.notify(refusalText(field.id, value), "warning");
 					}
 				}
 			}
@@ -1068,6 +1085,7 @@ export async function runImagesCommand(
 					config,
 					agentDir,
 					ui,
+					d.writeConfigFile,
 					"preferNative",
 					"",
 					(next) =>
@@ -1084,6 +1102,7 @@ export async function runImagesCommand(
 						config,
 						agentDir,
 						ui,
+						d.writeConfigFile,
 						"colors",
 						picked,
 						(next) => `pi-chafa: color mode is now ${next.colors}`,
@@ -1100,6 +1119,7 @@ export async function runImagesCommand(
 						config,
 						agentDir,
 						ui,
+						d.writeConfigFile,
 						"dither",
 						picked,
 						(next) => `pi-chafa: dither mode is now ${next.dither}`,
@@ -1118,6 +1138,7 @@ export async function runImagesCommand(
 						config,
 						agentDir,
 						ui,
+						d.writeConfigFile,
 						"symbolsSet",
 						picked,
 						(next) => `pi-chafa: symbolsSet is now ${next.symbolsSet}`,
@@ -1141,6 +1162,7 @@ export async function runImagesCommand(
 						config,
 						agentDir,
 						ui,
+						d.writeConfigFile,
 						"cellWidth",
 						value,
 						(next) => `pi-chafa: cellWidth is now ${next.cellWidth}`,
@@ -1164,6 +1186,7 @@ export async function runImagesCommand(
 						config,
 						agentDir,
 						ui,
+						d.writeConfigFile,
 						"maxRows",
 						value,
 						(next) => `pi-chafa: maxRows is now ${next.maxRows}`,
@@ -1190,6 +1213,7 @@ export async function runImagesCommand(
 						config,
 						agentDir,
 						ui,
+						d.writeConfigFile,
 						"timeoutMs",
 						value,
 						(next) => `pi-chafa: timeoutMs is now ${next.timeoutMs}`,
@@ -1216,6 +1240,7 @@ export async function runImagesCommand(
 							config,
 							agentDir,
 							ui,
+							d.writeConfigFile,
 							"binaryPath",
 							val,
 							binaryPathMessage,
@@ -1228,6 +1253,7 @@ export async function runImagesCommand(
 						config,
 						agentDir,
 						ui,
+						d.writeConfigFile,
 						"binaryPath",
 						pathOnly,
 						binaryPathMessage,
@@ -1238,6 +1264,7 @@ export async function runImagesCommand(
 						config,
 						agentDir,
 						ui,
+						d.writeConfigFile,
 						"binaryPath",
 						"",
 						binaryPathMessage,
