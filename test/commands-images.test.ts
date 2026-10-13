@@ -1,7 +1,7 @@
 import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { getSettingsListTheme, initTheme } from "@earendil-works/pi-coding-agent";
+import { getSettingsListTheme, initTheme, keyText } from "@earendil-works/pi-coding-agent";
 import {
 	getKeybindings,
 	KeybindingsManager,
@@ -539,6 +539,54 @@ describe("runImagesCommand", () => {
 		}
 	});
 
+	it("names the footer keys from the live bindings under a remap (#053)", async () => {
+		const originalKb = getKeybindings();
+		const remapped = new KeybindingsManager(TUI_KEYBINDINGS, {
+			...originalKb.getResolvedBindings(),
+			"tui.select.up": "ctrl+p",
+			"tui.select.down": "ctrl+n",
+			"tui.select.cancel": "ctrl+g",
+		});
+		setKeybindings(remapped);
+		let rendered: string[] = [];
+		try {
+			const customMock = vi.fn().mockImplementation(async (cb) => {
+				const component = cb(
+					{ requestRender: vi.fn() },
+					{
+						fg: (_c: string, text: string) => text,
+						bold: (text: string) => text,
+					},
+					getKeybindings(),
+					() => {},
+				) as { render: (w: number) => string[] };
+				rendered = component.render(80);
+				return { action: "cancelled" };
+			});
+			await runImagesCommand(
+				{ getAllTools: () => [] } as never,
+				"",
+				{
+					mode: "tui",
+					hasUI: true,
+					ui: {
+						custom: customMock,
+						select: vi.fn(),
+						notify: vi.fn(),
+						input: vi.fn(),
+					},
+				} as never,
+			);
+		} finally {
+			setKeybindings(originalKb);
+		}
+		const footer = rendered.join("\n");
+		expect(footer).toContain("ctrl+p/ctrl+n navigate");
+		expect(footer).toContain("ctrl+g/q close");
+		expect(footer).not.toContain("up/down navigate");
+		expect(footer).not.toContain("escape");
+	});
+
 	it("prints runtime status for an explicit 'status' argument without opening the panel (#016)", async () => {
 		const pi = { getAllTools: () => [] };
 		const notifyMock = vi.fn();
@@ -730,7 +778,7 @@ describe("runImagesCommand", () => {
 		await runImagesCommand(pi as never, "", ctx as never);
 
 		expect(handleInput).toBeDefined();
-		expect(rendered.join("\n")).toContain("Esc/q close");
+		expect(rendered.join("\n")).toContain(`${keyText("tui.select.cancel")}/q close`);
 		handleInput?.("q");
 		expect(doneMock).toHaveBeenCalledWith({ action: "cancelled" });
 	});
@@ -1211,12 +1259,14 @@ describe("runImagesCommand", () => {
 			expect(panel).toBeDefined();
 		});
 		const clean = panel?.render(80).join("\n") ?? "";
-		expect(clean).toContain("Esc/q close");
+		expect(clean).toContain(`${keyText("tui.select.cancel")}/q close`);
 		expect(clean).not.toContain("Ctrl+S");
 		panel?.handleInput("\r"); // dirty it
 		const dirty = panel?.render(80).join("\n") ?? "";
-		expect(dirty).toContain("unsaved changes — Ctrl+S saves and closes · Esc discards");
-		expect(dirty).not.toContain("Esc/q close");
+		expect(dirty).toContain(
+			`unsaved changes — Ctrl+S saves and closes · ${keyText("tui.select.cancel")}/q discards`,
+		);
+		expect(dirty).not.toContain("/q close");
 		panel?.handleInput("\x1b"); // close so the command ends
 		await run;
 	});

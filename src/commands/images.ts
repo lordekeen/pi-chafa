@@ -3,6 +3,7 @@ import {
 	type ExtensionCommandContext,
 	type ExtensionUIContext,
 	getSettingsListTheme,
+	keyText,
 } from "@earendil-works/pi-coding-agent";
 import {
 	Container,
@@ -575,18 +576,21 @@ export async function runImagesCommand(
 				const container = new Container();
 				container.addChild(new Text("pi-chafa Settings", 1, 0));
 				// The footer switches on dirty state: the save chord is advertised
-				// only while the draft differs from the file (#045).
+				// only while the draft differs from the file (#045). Navigation,
+				// confirm and cancel are named from the LIVE bindings (#053) — the host
+				// list matches keys through the same manager, so a remapped binding
+				// reads correctly here. The chords this wrapper matches by hand
+				// (Ctrl+S, `e`, `q`) are written literally, which is what the contract
+				// asks for a literal chord.
 				const hint = new Text("", 0, 0);
-				const dim = (text: string): string =>
-					theme && typeof theme.fg === "function"
-						? theme.fg("dim", text)
-						: text;
+				const dim = (text: string): string => theme.fg("dim", text);
+				const cancelKey = `${keyText("tui.select.cancel")}/q`;
 				const refreshHint = (): void => {
 					hint.setText(
 						dim(
 							countChanges(draft, base) > 0
-								? "unsaved changes — Ctrl+S saves and closes · Esc discards"
-								: "  ↑/↓ navigate · Enter/Space cycle · 'e' edit custom · Esc/q close",
+								? `unsaved changes — Ctrl+S saves and closes · ${cancelKey} discards`
+								: `  ${keyText("tui.select.up")}/${keyText("tui.select.down")} navigate · ${keyText("tui.select.confirm")}/space cycle · e edit · ${cancelKey} close`,
 						),
 					);
 				};
