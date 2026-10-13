@@ -548,7 +548,7 @@ async function buildRuntimeFacts(
 type WizardAction =
 	| { action: "done"; report?: string }
 	| { action: "cancelled" }
-	| { action: "input"; id: string };
+	| { action: "edit" };
 
 /** The eight user-settable fields of pi-chafa.json (spec §6.1), for staged-change counting (#045). */
 const SETTING_KEYS = [
@@ -566,6 +566,58 @@ const SETTING_KEYS = [
 function countChanges(a: ChafaConfig, b: ChafaConfig): number {
 	return SETTING_KEYS.filter((key) => a[key] !== b[key]).length;
 }
+
+/**
+ * The fields the `e` chord can edit, in list order, with each field's dialog copy
+ * and its rejection message (#052). The chord opens a picker over these instead of
+ * targeting the highlighted row: the wrapper then keeps no selection state at all,
+ * so nothing can make `e` edit a field the user is not looking at — and the host is
+ * free to own navigation and mouse (#049).
+ */
+const EDITABLE_FIELDS: Array<{
+	id: string;
+	label: string;
+	title: string;
+	placeholder: string;
+	invalid: string | null;
+}> = [
+	{
+		id: "cellWidth",
+		label: "Cell width",
+		title: "New cellWidth (columns)",
+		placeholder: "integer columns (e.g. 72)",
+		invalid: "pi-chafa: invalid cellWidth (must be positive integer)",
+	},
+	{
+		id: "maxRows",
+		label: "Max rows",
+		title: "New maxRows (row cap)",
+		placeholder: "integer row cap (e.g. 60)",
+		invalid: "pi-chafa: invalid maxRows (must be positive integer)",
+	},
+	{
+		id: "timeoutMs",
+		label: "Timeout (ms)",
+		title: "New timeoutMs (milliseconds)",
+		placeholder: "integer milliseconds (e.g. 8000)",
+		invalid: "pi-chafa: invalid timeoutMs (must be positive integer)",
+	},
+	{
+		id: "symbolsSet",
+		label: "Symbols set",
+		title: "New symbols set",
+		placeholder: "chafa --symbols class list (e.g. block+border)",
+		invalid: "pi-chafa: invalid symbolsSet (cannot be empty)",
+	},
+	{
+		id: "binaryPath",
+		label: "Binary path",
+		title: "Chafa binary path",
+		placeholder: "absolute path to chafa, or empty to clear",
+		// Any string is a valid binaryPath (empty clears it), so there is nothing to reject.
+		invalid: null,
+	},
+];
 
 /**
  * Interactive wizard: pick or cycle settings inline with descriptions,
@@ -655,7 +707,6 @@ export async function runImagesCommand(
 					(_current, close) =>
 						runtimeStatusSubmenu(runtimeLines, kb, () => close()),
 				);
-				let currentIndex = 0;
 				const list = new SettingsList(
 					items,
 					Math.min(items.length + 2, 12),
@@ -741,21 +792,10 @@ export async function runImagesCommand(
 							saveAndClose();
 							return;
 						}
-						// Single selection owner (#041): the mirror moves ONLY on the
-						// same factory-keybinding predicate the list itself uses, so it
-						// can never drift from the rendered highlight under remapped
-						// keybindings (the old raw-arrow fallback did). Enter is NOT
-						// intercepted: the list owns activation for every row, opening
-						// the status submenu or cycling a value (#049).
-						if (kb.matches(data, "tui.select.up")) {
-							currentIndex =
-								currentIndex === 0 ? items.length - 1 : currentIndex - 1;
-						} else if (kb.matches(data, "tui.select.down")) {
-							currentIndex =
-								currentIndex === items.length - 1 ? 0 : currentIndex + 1;
-						}
-
-						const currentItem = items[currentIndex];
+						// No selection mirror (#052): the host list owns navigation, activation,
+						// submenus and (through the Container wrapper) mouse, and nothing here
+						// depends on which row is highlighted — the `e` chord picks its field in
+						// a dialog instead of assuming the highlight.
 						// 'q'/'Q' is an exact alias of Esc (#048): it cancels and is reported,
 						// so a dirty draft is never discarded silently. Letter keys go through
 						// the host matcher so kitty-protocol input still lands on them (#041) —
@@ -765,17 +805,10 @@ export async function runImagesCommand(
 							return;
 						}
 
-						// 'e'/'E' edit editable fields
-						if (
-							(matchesKey(data, "e") || matchesKey(data, "shift+e")) &&
-							currentItem &&
-							(currentItem.id === "binaryPath" ||
-								currentItem.id === "cellWidth" ||
-								currentItem.id === "maxRows" ||
-								currentItem.id === "timeoutMs" ||
-								currentItem.id === "symbolsSet")
-						) {
-							done({ action: "input", id: currentItem.id });
+						// 'e'/'E' edits a field chosen in a picker (#052): not knowing the
+						// highlighted row is exactly what lets the host own the selection.
+						if (matchesKey(data, "e") || matchesKey(data, "shift+e")) {
+							done({ action: "edit" });
 							return;
 						}
 
@@ -800,78 +833,25 @@ export async function runImagesCommand(
 				return;
 			}
 
-			if (result.action === "input") {
-				const id = result.id;
-				// #046: the 'e' dialogs STAGE into the draft — no write, no per-field
-				// notification; the save report (Ctrl+S / Done) covers them, and Esc
-				// after an 'e'-edit leaves the file byte-identical. Invalid values
-				// keep the warn + re-prompt, never writing. The non-custom fallback
-				// flow below keeps its per-step persistence (dialog frames promise
-				// no cancel — honest as-is).
-				if (id === "cellWidth") {
-					const value = await ui.input(
-						"New cellWidth (columns)",
-						"integer columns (e.g. 72)",
-					);
+			if (result.action === "edit") {
+				// Picker first (#052), then the field's own dialog. Both dialogs promise
+				// nothing, so staging here is honest: the draft is written only by the
+				// Ctrl+S confirm (#046). Invalid values warn and stage nothing.
+				const label = await ui.select(
+					"Edit which setting?",
+					EDITABLE_FIELDS.map((field) => field.label),
+				);
+				const field =
+					label === undefined
+						? undefined
+						: EDITABLE_FIELDS.find((f) => f.label === label);
+				if (field) {
+					const value = await ui.input(field.title, field.placeholder);
 					if (value !== undefined) {
-						const next = applyMenuChange(draft, "cellWidth", value);
+						const next = applyMenuChange(draft, field.id, value);
 						if (next) draft = next;
-						else
-							ui.notify(
-								"pi-chafa: invalid cellWidth (must be positive integer)",
-								"warning",
-							);
-					}
-				} else if (id === "maxRows") {
-					const value = await ui.input(
-						"New maxRows (row cap)",
-						"integer row cap (e.g. 60)",
-					);
-					if (value !== undefined) {
-						const next = applyMenuChange(draft, "maxRows", value);
-						if (next) draft = next;
-						else
-							ui.notify(
-								"pi-chafa: invalid maxRows (must be positive integer)",
-								"warning",
-							);
-					}
-				} else if (id === "timeoutMs") {
-					const value = await ui.input(
-						"New timeoutMs (milliseconds)",
-						"integer milliseconds (e.g. 8000)",
-					);
-					if (value !== undefined) {
-						const next = applyMenuChange(draft, "timeoutMs", value);
-						if (next) draft = next;
-						else
-							ui.notify(
-								"pi-chafa: invalid timeoutMs (must be positive integer)",
-								"warning",
-							);
-					}
-				} else if (id === "symbolsSet") {
-					const value = await ui.input(
-						"New symbols set",
-						"chafa --symbols class list (e.g. block+border)",
-					);
-					if (value !== undefined) {
-						const next = applyMenuChange(draft, "symbolsSet", value);
-						if (next) draft = next;
-						else
-							ui.notify(
-								"pi-chafa: invalid symbolsSet (cannot be empty)",
-								"warning",
-							);
-					}
-				} else if (id === "binaryPath") {
-					const value = await ui.input(
-						"Chafa binary path",
-						"absolute path to chafa, or empty to clear",
-					);
-					if (value !== undefined) {
-						const next = applyMenuChange(draft, "binaryPath", value);
-						if (next) draft = next;
+						else if (field.invalid !== null)
+							ui.notify(field.invalid, "warning");
 					}
 				}
 			}

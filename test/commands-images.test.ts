@@ -519,7 +519,7 @@ describe("runImagesCommand", () => {
 		expect(rendered?.join("\n")).not.toContain("⚙"); // ASCII-safe caption (#041)
 	});
 
-	it("keeps 'e' aligned with the highlight under remapped keys (#041)", async () => {
+	it("opens the field picker for 'e' with no highlight involved, under a remap (#052)", async () => {
 		const originalKb = getKeybindings();
 		const remapped = new KeybindingsManager(TUI_KEYBINDINGS, {
 			...originalKb.getResolvedBindings(),
@@ -527,9 +527,10 @@ describe("runImagesCommand", () => {
 			"tui.select.down": "ctrl+n",
 		});
 		setKeybindings(remapped);
-		let resolvePanel: (r: { action: string; id?: string }) => void = () => {};
+		const selectMock = vi.fn().mockResolvedValue(undefined); // dismiss the picker
 		const inputMock = vi.fn();
-		let mounted: { handleInput: (data: string) => void } | undefined;
+		let resolvePanel: (r: unknown) => void = () => {};
+		let mounted: { handleInput: (d: string) => void } | undefined;
 		try {
 			const customMock = vi.fn().mockImplementation(async (cb) => {
 				const component = cb(
@@ -539,17 +540,18 @@ describe("runImagesCommand", () => {
 						bold: (text: string) => text,
 					},
 					getKeybindings(),
-					(r: { action: string; id?: string }) => resolvePanel(r),
-				) as { handleInput: (data: string) => void };
+					(r: unknown) => resolvePanel(r),
+				) as { handleInput: (d: string) => void };
 				mounted = component;
 				if (customMock.mock.calls.length === 1) {
-					// Legacy arrows are dead under the remap: the highlight stays on
-					// the first row, so 'e' must NOT open an edit dialog.
-					for (let i = 0; i < 5; i++) component.handleInput("\x1b[B");
-					component.handleInput("e");
-					return new Promise((res) => {
+					// Wire the resolver BEFORE pressing 'e': done() fires during the
+					// simulation and must land on a live resolver.
+					const promise = new Promise((res) => {
 						resolvePanel = res;
 					});
+					// 'e' no longer consults the highlight: no navigation keys pressed.
+					component.handleInput("e");
+					return promise;
 				}
 				return { action: "done" };
 			});
@@ -561,23 +563,26 @@ describe("runImagesCommand", () => {
 					hasUI: true,
 					ui: {
 						custom: customMock,
-						select: vi.fn(),
+						select: selectMock,
 						notify: vi.fn(),
 						input: inputMock,
 					},
 				} as never,
 			);
 			await vi.waitFor(() => {
-				expect(customMock).toHaveBeenCalledTimes(1);
+				expect(selectMock).toHaveBeenCalledTimes(1);
 			});
+			expect(mounted).toBeDefined();
+			expect(selectMock.mock.calls[0]?.[0]).toBe("Edit which setting?");
+			expect(selectMock.mock.calls[0]?.[1]).toEqual([
+				"Cell width",
+				"Max rows",
+				"Timeout (ms)",
+				"Symbols set",
+				"Binary path",
+			]);
+			// Dismissing the picker stages nothing and opens no field dialog.
 			expect(inputMock).not.toHaveBeenCalled();
-			// Now navigate with the remapped key and 'e' must hit Max rows (row 5).
-			for (let i = 0; i < 5; i++) mounted?.handleInput("\x0e"); // ctrl+n
-			mounted?.handleInput("e");
-			await vi.waitFor(() => {
-				expect(inputMock).toHaveBeenCalledTimes(1);
-			});
-			expect(inputMock.mock.calls[0]?.[0]).toContain("maxRows");
 			resolvePanel({ action: "done" });
 			await run;
 		} finally {
@@ -1036,7 +1041,7 @@ describe("runImagesCommand", () => {
 			};
 			cb(tui, theme, getKeybindings(), () => {});
 			if (invocation === 1) {
-				return { action: "input", id: "binaryPath" };
+				return { action: "edit" };
 			}
 			// Staged (#046): the dialog value lands in the draft; Ctrl+S writes it.
 			return { action: "done", report: undefined };
@@ -1047,7 +1052,7 @@ describe("runImagesCommand", () => {
 			hasUI: true,
 			ui: {
 				custom: customMock,
-				select: vi.fn(),
+				select: vi.fn().mockResolvedValue("Binary path"),
 				notify: notifyMock,
 				input: inputMock,
 			},
@@ -1167,7 +1172,7 @@ describe("runImagesCommand", () => {
 				handleInput: (d: string) => void;
 			};
 			if (invocation === 1) {
-				return { action: "input", id: "timeoutMs" };
+				return { action: "edit" };
 			}
 			panel = component;
 			return { action: "done" };
@@ -1178,7 +1183,7 @@ describe("runImagesCommand", () => {
 			hasUI: true,
 			ui: {
 				custom: customMock,
-				select: vi.fn(),
+				select: vi.fn().mockResolvedValue("Timeout (ms)"),
 				notify: notifyMock,
 				input: inputMock,
 			},
@@ -1210,7 +1215,7 @@ describe("runImagesCommand", () => {
 				bold: (text: string) => text,
 			};
 			cb(tui, theme, getKeybindings(), () => {});
-			if (invocation === 1) return { action: "input", id: "timeoutMs" };
+			if (invocation === 1) return { action: "edit" };
 			return { action: "done" };
 		});
 
@@ -1219,7 +1224,7 @@ describe("runImagesCommand", () => {
 			hasUI: true,
 			ui: {
 				custom: customMock,
-				select: vi.fn(),
+				select: vi.fn().mockResolvedValue("Timeout (ms)"),
 				notify: notifyMock,
 				input: inputMock,
 			},
@@ -1271,8 +1276,10 @@ describe("runImagesCommand", () => {
 		) => void;
 		deps?: Parameters<typeof runImagesCommandRaw>[3];
 		input?: (prompt: string) => string | undefined;
+		select?: (prompt: string) => string | undefined;
 	}) => {
 		const userInput = opts.input ?? (() => undefined);
+		const userSelect = vi.fn(async (prompt: string) => opts.select?.(prompt));
 		const notifyMock = vi.fn();
 		let resolvePanel: (r: unknown) => void = () => {};
 		let lastAction: unknown = { action: "done" };
@@ -1311,7 +1318,7 @@ describe("runImagesCommand", () => {
 				hasUI: true,
 				ui: {
 					custom: customMock,
-					select: vi.fn(),
+					select: userSelect,
 					notify: notifyMock,
 					input: userInput,
 				},
@@ -1492,13 +1499,10 @@ describe("runImagesCommand", () => {
 		const { run, notifyMock } = await mountPanel({
 			deps: { writeConfigFile: writeSpy },
 			input: () => "moon+triangle",
+			select: () => "Symbols set",
 			simulate: (c, mount) => {
 				if (mount === 1) {
-					// Symbols set is row 3; press 'e' to edit it.
-					c.handleInput("\x1b[B");
-					c.handleInput("\x1b[B");
-					c.handleInput("\x1b[B");
-					c.handleInput("e");
+					c.handleInput("e"); // picker → Symbols set → type the value
 				} else {
 					c.handleInput("\x1b"); // Esc discards
 				}
@@ -1519,11 +1523,9 @@ describe("runImagesCommand", () => {
 		const { run, notifyMock } = await mountPanel({
 			deps: { writeConfigFile: writeSpy },
 			input: () => "moon+triangle",
+			select: () => "Symbols set",
 			simulate: (c, mount) => {
 				if (mount === 1) {
-					c.handleInput("\x1b[B");
-					c.handleInput("\x1b[B");
-					c.handleInput("\x1b[B");
 					c.handleInput("e");
 				} else {
 					c.handleInput("\x13"); // Ctrl+S
@@ -1545,11 +1547,9 @@ describe("runImagesCommand", () => {
 		const { run, notifyMock } = await mountPanel({
 			deps: { writeConfigFile: writeSpy },
 			input: () => "   ",
+			select: () => "Symbols set",
 			simulate: (c, mount) => {
 				if (mount === 1) {
-					c.handleInput("\x1b[B");
-					c.handleInput("\x1b[B");
-					c.handleInput("\x1b[B");
 					c.handleInput("e");
 				} else {
 					c.handleInput("\x1b");

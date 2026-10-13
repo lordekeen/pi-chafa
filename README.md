@@ -30,7 +30,7 @@ Ask the agent to show an image: "show me ~/Pictures/plot.png" — the agent call
 Run `/images` to tune defaults (including `timeoutMs`) and inspect the runtime environment (the **effective** protocol and which source supplied it — `getCapabilities()`, `terminal.images`, or `PI_IMAGE_PROTOCOL` — plus host `showImages`, pi-pretty read override, chafa version):
 - <kbd>↑</kbd> / <kbd>↓</kbd> — Navigate settings
 - <kbd>Enter</kbd> / <kbd>Space</kbd> — Cycle through presets inline (staged); on **Runtime status** it opens the runtime facts in place, with no dialog
-- <kbd>e</kbd> — Open modal to type a custom value (staged)
+- <kbd>e</kbd> — Pick a setting from a list, then type a custom value (staged)
 - <kbd>Ctrl</kbd>+<kbd>S</kbd> — Save the staged changes and close (the only confirm)
 - <kbd>Esc</kbd> / <kbd>q</kbd> — Discard the staged changes and close; both report `pi-chafa: settings unchanged (cancelled)` (the file stays untouched)
 
