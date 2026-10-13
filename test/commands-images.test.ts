@@ -820,20 +820,23 @@ describe("runImagesCommand", () => {
 			wheelDelta,
 		});
 		const cursorAt = () => lines.findIndex((line) => line.includes("→ "));
-		// The title and its spacer sit above the list, so its first row is line 2.
-		expect(cursorAt()).toBe(2);
-		// A press selects the row under the pointer (Dither mode is row 2 → y 4)…
-		panel?.handleMouse?.(mouse("press", 4));
+		// The chrome above the list (the frame rule, the title, its spacer) is not what
+		// this test is about, so anchor on the live cursor line rather than an offset.
+		const listTop = cursorAt();
+		expect(lines[listTop]).toContain("Prefer native");
+		// A press selects the row under the pointer (Dither mode is row 2)…
+		const ditherY = listTop + 2;
+		panel?.handleMouse?.(mouse("press", ditherY));
 		lines = panel?.render(80) ?? [];
-		expect(cursorAt()).toBe(4);
+		expect(cursorAt()).toBe(ditherY);
 		// …and Enter then acts on THAT row instead of a stale keyboard cursor.
 		panel?.handleInput("\r");
 		lines = panel?.render(80) ?? [];
-		expect(lines[4]).toContain("ordered"); // dither: none → ordered
+		expect(lines[ditherY]).toContain("ordered"); // dither: none → ordered
 		// Wheel moves the selection by one; the list clamps at the ends.
-		panel?.handleMouse?.(mouse("wheel", 4, 1));
+		panel?.handleMouse?.(mouse("wheel", ditherY, 1));
 		lines = panel?.render(80) ?? [];
-		expect(cursorAt()).toBe(5);
+		expect(cursorAt()).toBe(ditherY + 1);
 	});
 
 	it("themes and aligns the title, and puts the key hint under the list (#056)", async () => {
@@ -866,13 +869,51 @@ describe("runImagesCommand", () => {
 			} as never,
 		);
 		// Themed bold, in the same two-column gutter the list's rows use.
-		expect(rendered[0]).toContain("*pi-chafa Settings*");
-		expect(rendered[0]?.startsWith("  *")).toBe(true);
+		const titleLine = rendered.find((line) => line.includes("pi-chafa Settings"));
+		expect(titleLine).toContain("*pi-chafa Settings*");
+		expect(titleLine?.startsWith("  *")).toBe(true);
 		// The panel's key hint sits below the rows (and below the host's own line).
 		const rowIndex = rendered.findIndex((line) => line.includes("Prefer native"));
 		const hintIndex = rendered.findIndex((line) => line.includes("navigate"));
 		expect(rowIndex).toBeGreaterThan(-1);
 		expect(hintIndex).toBeGreaterThan(rowIndex);
+	});
+
+	it("frames the panel with the host's full-width rule top and bottom (#057)", async () => {
+		let rendered: string[] = [];
+		const customMock = vi.fn().mockImplementation(async (cb) => {
+			const component = cb(
+				{ requestRender: vi.fn() },
+				{
+					fg: (_c: string, text: string) => text,
+					bold: (text: string) => `*${text}*`,
+				},
+				getKeybindings(),
+				() => {},
+			) as { render: (w: number) => string[] };
+			rendered = component.render(80);
+			return { action: "cancelled" };
+		});
+		await runImagesCommand(
+			{ getAllTools: () => [] } as never,
+			"",
+			{
+				mode: "tui",
+				hasUI: true,
+				ui: {
+					custom: customMock,
+					select: vi.fn(),
+					notify: vi.fn(),
+					input: vi.fn(),
+				},
+			} as never,
+		);
+		// The host's DynamicBorder renders one full-width rule: the panel opens and
+		// closes with it, exactly as pi's own /settings panel does (settings-selector).
+		expect(rendered[0]).toBe("─".repeat(80));
+		expect(rendered[rendered.length - 1]).toBe("─".repeat(80));
+		// The title sits inside the frame, not above it.
+		expect(rendered[1]).toContain("*pi-chafa Settings*");
 	});
 
 	it("prints runtime status for an explicit 'status' argument without opening the panel (#016)", async () => {

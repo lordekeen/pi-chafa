@@ -1,4 +1,5 @@
 import {
+	DynamicBorder,
 	type ExtensionAPI,
 	type ExtensionCommandContext,
 	type ExtensionUIContext,
@@ -875,6 +876,13 @@ export async function runImagesCommand(
 				);
 
 				const container = new Container();
+				// The host's own full-width rule frames the panel, top and bottom, exactly
+				// as pi's /settings panel does (settings-selector.js:626/736). DynamicBorder's
+				// default colour reads a module-level theme that may be undefined for an
+				// extension loaded via jiti, so it is constructed with the per-mount theme
+				// the factory handed us — which also tracks a live theme switch (#057).
+				const frame = (): DynamicBorder =>
+					new DynamicBorder((line) => theme.fg("border", line));
 				const title = new Text("", 2, 0);
 				// The footer switches on dirty state: the save chord is advertised
 				// only while the draft differs from the file (#045). Navigation,
@@ -901,6 +909,7 @@ export async function runImagesCommand(
 					);
 				};
 				refreshHint();
+				container.addChild(frame());
 				container.addChild(title);
 				container.addChild(new Spacer(1));
 				container.addChild(list);
@@ -908,6 +917,7 @@ export async function runImagesCommand(
 				// describe this panel belong together, and the save chord is the one
 				// closest to the rows it saves (#056).
 				container.addChild(hint);
+				container.addChild(frame());
 
 				// The one confirm: write once, close, report the count and file.
 				// A failed write warns, keeps the draft, and leaves the panel open
