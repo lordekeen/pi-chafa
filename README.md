@@ -1,6 +1,6 @@
 # pi-chafa
 
-Show image files to the **user** in the pi terminal: native kitty/iTerm2 rendering where the terminal supports it, and [Chafa](https://github.com/hpjansson/chafa) ANSI/Unicode symbols art everywhere else (tmux, screen, Alacritty, VS Code, plain SSH, Windows consoles).
+Pi coding agent extension that exposes a new tool to the agent, `show_image` display's image files to the **user** in the pi terminal: native kitty/iTerm2 rendering where the terminal supports it, and [Chafa](https://github.com/hpjansson/chafa) ANSI/Unicode symbols art everywhere else (tmux, screen, Alacritty, VS Code, plain SSH, Windows consoles).
 
 This is a **UI/UX feature, not a vision feature**: the model never receives the image contents.
 
