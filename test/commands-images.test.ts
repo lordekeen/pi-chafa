@@ -95,6 +95,25 @@ describe("SETTING_DESCRIPTIONS", () => {
 });
 
 describe("buildSettingItems", () => {
+	it("strips control characters from the free-text values it renders (#060)", () => {
+		// The funnel refuses NEW ones, but a hand-edited pi-chafa.json can still hold
+		// them, and these strings go straight into a row's Text — and into the
+		// fallback's option labels, which interpolate the same currentValue.
+		const items = buildSettingItems({
+			...DEFAULT_CONFIG,
+			symbolsSet: "ascii\u001b[31m",
+			binaryPath: "/evil\u001b[2Jbin/chafa",
+		});
+		const symbols = items.find((i) => i.id === "symbolsSet")!;
+		const binary = items.find((i) => i.id === "binaryPath")!;
+		expect(symbols.currentValue).toBe("ascii");
+		expect(binary.currentValue).toBe("/evilbin/chafa");
+		// The ladder is offered for cycling, so it cannot carry the raw value either:
+		// staging it would be refused by the funnel and the row would look stuck.
+		expect(symbols.values?.some((value) => value.includes("\u001b"))).toBe(false);
+		expect(binary.values?.some((value) => value.includes("\u001b"))).toBe(false);
+	});
+
 	it("builds settings list items matching config and presets", () => {
 		const config: ChafaConfig = {
 			...DEFAULT_CONFIG,

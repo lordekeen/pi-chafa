@@ -276,20 +276,29 @@ export function buildSettingItems(
 		? [...TIMEOUT_PRESETS]
 		: [currentTimeoutStr, ...TIMEOUT_PRESETS];
 
-	const symbolValues = SYMBOL_PRESETS.includes(config.symbolsSet)
+	const currentSymbols = stripControls(config.symbolsSet);
+	const currentBinary = config.binaryPath
+		? stripControls(config.binaryPath)
+		: null;
+
+	// The two free-text fields carry whatever the file holds, and a hand-edited
+	// pi-chafa.json can hold control bytes (#060): the funnel refuses new ones, but
+	// these are rendered into a row's Text and offered for cycling, so they are
+	// sanitized at this boundary (invariant 3).
+	const symbolValues = SYMBOL_PRESETS.includes(currentSymbols)
 		? [...SYMBOL_PRESETS]
-		: [config.symbolsSet, ...SYMBOL_PRESETS];
+		: [currentSymbols, ...SYMBOL_PRESETS];
 
 	const binaryValues: string[] = ["(auto on PATH)"];
 	if (detectedBinary && detectedBinary !== "(auto on PATH)") {
 		binaryValues.push(detectedBinary);
 	}
 	if (
-		config.binaryPath &&
-		config.binaryPath !== detectedBinary &&
-		config.binaryPath !== "(auto on PATH)"
+		currentBinary &&
+		currentBinary !== detectedBinary &&
+		currentBinary !== "(auto on PATH)"
 	) {
-		binaryValues.push(config.binaryPath);
+		binaryValues.push(currentBinary);
 	}
 
 	return [
@@ -318,7 +327,7 @@ export function buildSettingItems(
 			id: "symbolsSet",
 			label: "Symbols set",
 			description: SETTING_DESCRIPTIONS.symbolsSet,
-			currentValue: config.symbolsSet,
+			currentValue: currentSymbols,
 			values: symbolValues,
 		},
 		{
@@ -346,7 +355,7 @@ export function buildSettingItems(
 			id: "binaryPath",
 			label: "Binary path",
 			description: SETTING_DESCRIPTIONS.binaryPath,
-			currentValue: config.binaryPath ?? "(auto on PATH)",
+			currentValue: currentBinary ?? "(auto on PATH)",
 			values: binaryValues,
 		},
 		{
