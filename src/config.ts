@@ -308,6 +308,35 @@ export function readHostImageSettings(
 	return result;
 }
 
+/**
+ * The write policy for `pi-chafa.json` (decision D25, #058): a save persists the
+ * `version` plus exactly the keys the file already had — carrying the *file's*
+ * own values, never the resolved ones — overridden by the keys this save changed.
+ *
+ * A full-config write is the defect this replaces: it makes every key
+ * "explicitly present", and `resolveConfig` reads `loadFileConfig().keys` to
+ * decide whether pi's own `terminal.imageWidthCells` may still supply
+ * `cellWidth` (#010) — so one unrelated save silently overrode the host's
+ * setting. Environment-derived values must never land in the file for the same
+ * reason: they are not the file's own, and they are not what the user changed.
+ *
+ * `version` is metadata rather than a setting, so it is always written and the
+ * file stays self-describing. `formatOrder` survives only if the file had it: it
+ * is not user-settable, so a save must not introduce it.
+ */
+export function mergeForWrite(
+	fileValues: Partial<ChafaConfig>,
+	resolved: ChafaConfig,
+	changedKeys: readonly (keyof ChafaConfig)[],
+): Partial<ChafaConfig> {
+	// Object.fromEntries keeps the per-key correlation that a plain loop over the
+	// `keyof` union cannot express (each value is of exactly its own key's type).
+	const picked = Object.fromEntries(
+		changedKeys.map((key) => [key, resolved[key]]),
+	) as Partial<ChafaConfig>;
+	return { version: DEFAULT_CONFIG.version, ...fileValues, ...picked };
+}
+
 /** Persist a config to <agentDir>/pi-chafa.json (used by the /images command). */
 export function writeConfigFile(agentDir: string, config: ChafaConfig): void {
 	if (!agentDir)

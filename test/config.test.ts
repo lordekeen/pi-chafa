@@ -10,6 +10,7 @@ import {
 	getConfigDir,
 	getHostAgentDir,
 	loadConfig,
+	mergeForWrite,
 	readHostImageSettings,
 	resolveConfig,
 	writeConfigFile,
@@ -291,5 +292,85 @@ describe("writeConfigFile", () => {
 		mkdirSync(join(dir, "pi-chafa.json"));
 		expect(() => writeConfigFile(dir, DEFAULT_CONFIG)).toThrow();
 		expect(readdirSync(dir).filter((name) => name.endsWith(".tmp"))).toEqual([]);
+	});
+});
+
+describe("mergeForWrite (#058, D25)", () => {
+	const resolved = (over: Partial<ChafaConfig> = {}): ChafaConfig => ({
+		...DEFAULT_CONFIG,
+		...over,
+	});
+
+	it("writes the version plus only the keys the save changed", () => {
+		// The trap this policy exists for: `resolved` carries a cellWidth (from the
+		// host's terminal.imageWidthCells), and writing it would make the key
+		// explicitly present — which is exactly what resolveConfig reads to decide
+		// whether pi's own setting may still supply it (#010).
+		expect(mergeForWrite({}, resolved({ colors: "8" }), ["colors"])).toStrictEqual({
+			version: DEFAULT_CONFIG.version,
+			colors: "8",
+		});
+	});
+
+	it("keeps the file's own values for keys the save did not touch", () => {
+		const file: Partial<ChafaConfig> = { colors: "16", symbolsSet: "ascii" };
+		const written = mergeForWrite(file, resolved({ colors: "8", cellWidth: 72 }), [
+			"cellWidth",
+		]);
+		expect(written).toStrictEqual({
+			version: DEFAULT_CONFIG.version,
+			colors: "16",
+			symbolsSet: "ascii",
+			cellWidth: 72,
+		});
+	});
+
+	it("never persists an env-resolved value for an untouched key", () => {
+		// CHAFA_COLORS=8 in the environment: the resolved config says 8 while the file
+		// says 16, and only a touched key may take the resolved value.
+		const file: Partial<ChafaConfig> = { colors: "16" };
+		const written = mergeForWrite(file, resolved({ colors: "8" }), ["maxRows"]);
+		expect(written.colors).toBe("16");
+		expect(written.maxRows).toBe(DEFAULT_CONFIG.maxRows);
+	});
+
+	it("lets a changed key override the file's old value", () => {
+		const file: Partial<ChafaConfig> = { colors: "16" };
+		const written = mergeForWrite(file, resolved({ colors: "full" }), ["colors"]);
+		expect(written.colors).toBe("full");
+	});
+
+	it("writes a cleared binaryPath as null rather than dropping the key", () => {
+		const file: Partial<ChafaConfig> = { binaryPath: "/opt/chafa" };
+		const written = mergeForWrite(file, resolved({ binaryPath: null }), [
+			"binaryPath",
+		]);
+		expect(written).toStrictEqual({
+			version: DEFAULT_CONFIG.version,
+			binaryPath: null,
+		});
+	});
+
+	it("preserves formatOrder only when the file already had it", () => {
+		const withOrder = mergeForWrite(
+			{ formatOrder: ["native", "symbols"] },
+			resolved(),
+			[],
+		);
+		expect(withOrder.formatOrder).toStrictEqual(["native", "symbols"]);
+		// Absent stays absent: it is not user-settable, so a save must not introduce it.
+		expect(mergeForWrite({}, resolved(), ["colors"])).not.toHaveProperty(
+			"formatOrder",
+		);
+	});
+
+	it("does not mutate either input", () => {
+		const file: Partial<ChafaConfig> = { colors: "16" };
+		const current = resolved({ colors: "8" });
+		const fileBefore = structuredClone(file);
+		const resolvedBefore = structuredClone(current);
+		mergeForWrite(file, current, ["colors", "cellWidth"]);
+		expect(file).toStrictEqual(fileBefore);
+		expect(current).toStrictEqual(resolvedBefore);
 	});
 });
