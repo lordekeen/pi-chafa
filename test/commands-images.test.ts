@@ -291,6 +291,33 @@ describe("applyMenuChange", () => {
 	it("returns null for an unknown menu choice", () => {
 		expect(applyMenuChange(base, "Nope", "")).toBeNull();
 	});
+
+	it("refuses a value carrying control characters for every key (#060)", () => {
+		// A valid value per key, so what refuses it is the control character and
+		// nothing else. Without the guard, symbolsSet and binaryPath accept the
+		// smuggled byte verbatim (their validators take any non-empty string); the
+		// other six are already refused by their own validators, so the guard is
+		// what makes the contract uniform across every key.
+		const embeddable: Record<string, string> = {
+			preferNative: "true",
+			colors: "16",
+			dither: "ordered",
+			symbolsSet: "ascii",
+			cellWidth: "84",
+			maxRows: "40",
+			timeoutMs: "2000",
+			binaryPath: "/opt/chafa",
+		};
+		for (const key of SETTING_KEYS) {
+			expect(applyMenuChange(base, key, `${embeddable[key]}\u001b`)).toBeNull();
+		}
+		// A bare control character, and one trim() would not remove from an end.
+		expect(applyMenuChange(base, "symbolsSet", "\u0007")).toBeNull();
+		expect(applyMenuChange(base, "binaryPath", "\u001b/opt/chafa")).toBeNull();
+		// Raw, not post-trim: the CLI path already checks the value as typed, and
+		// one rule for both paths is the point of the guard.
+		expect(applyMenuChange(base, "cellWidth", "84\n")).toBeNull();
+	});
 });
 
 describe("parseSettingArg (#050)", () => {
@@ -1266,16 +1293,21 @@ describe("runImagesCommand", () => {
 		expect(message).toContain("bogus");
 	});
 
-	it("sanitizes a saved binaryPath value in the fallback flow's notification (#038)", async () => {
-		// The staged TUI panel never notifies user values (only the save report,
-		// which carries no field value); the RPC fallback flow still persists and
-		// notifies per confirmed step, so THAT is where free-text value
-		// sanitization is observable (#038, #046).
+	it("refuses a control-character binaryPath in the fallback instead of saving it (#060)", async () => {
+		// #038 pinned the fallback ACCEPTING a control-char path and sanitizing only
+		// its notification. That left the raw bytes in pi-chafa.json, and the panel
+		// renders binaryPath's currentValue un-stripped (`buildSettingItems`), so
+		// they came back raw on the next open — the invariant-3 hazard #060 fixes.
+		// The value is now refused on every path; #038's guarantee that no
+		// notification carries a raw escape still holds, below.
 		const pi = { getAllTools: () => [] };
 		const notifyMock = vi.fn();
+		const writer = vi.fn();
 		const selectMock = vi
 			.fn()
-			.mockResolvedValueOnce(`Binary path: (auto on PATH) — ${SETTING_DESCRIPTIONS.binaryPath}`)
+			.mockResolvedValueOnce(
+				`Binary path: (auto on PATH) — ${SETTING_DESCRIPTIONS.binaryPath}`,
+			)
 			.mockResolvedValueOnce("Type custom path...")
 			.mockResolvedValueOnce(`Done — ${SETTING_DESCRIPTIONS.done}`);
 		const inputMock = vi.fn().mockResolvedValueOnce("/evil\x1b[2Jbin/chafa");
@@ -1289,13 +1321,14 @@ describe("runImagesCommand", () => {
 			},
 		};
 
-		await runImagesCommand(pi as never, "", ctx as never);
+		await runImagesCommand(pi as never, "", ctx as never, {
+			writeConfigFile: writer,
+		});
 
 		const messages = notifyMock.mock.calls.map((call) => call[0] as string);
-		const saved = messages.find((m) => m.includes("saved binaryPath"));
-		expect(saved).toBeDefined();
-		expect(saved).toContain("/evilbin/chafa");
-		expect(saved).not.toContain("\x1b");
+		expect(messages.some((m) => m.includes("saved binaryPath"))).toBe(false);
+		expect(writer).not.toHaveBeenCalled();
+		for (const message of messages) expect(message).not.toContain("\x1b");
 	});
 
 	it("cancels the panel on lowercase q and documents it in the hint (#003, #048)", async () => {

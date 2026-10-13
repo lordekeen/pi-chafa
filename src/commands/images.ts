@@ -386,14 +386,31 @@ function hostSettingsListTheme(): SettingsListTheme {
 }
 
 /**
+ * Refusal copy for a value carrying control characters. One home for the
+ * sentence, because three paths report it: the CLI's `parseSettingArg` reason
+ * and the two dialog paths' warnings (#060).
+ */
+export function controlCharReason(key: string): string {
+	return `invalid ${key} (control characters are not allowed)`;
+}
+
+/**
  * Apply one wizard choice to the in-memory config. Returns null when the
  * choice is unknown or the value is invalid (the caller re-prompts).
+ *
+ * A value carrying control characters is refused here — in the funnel every
+ * input path already shares — rather than stripped, and rather than only in
+ * `parseSettingArg` (#060): the value is persisted and later re-rendered in the
+ * panel's rows, so a stripped path is a different path than the user typed
+ * (invariant 3). The check is on the value as typed, not post-`trim()`, so the
+ * dialog paths and the CLI agree byte for byte.
  */
 export function applyMenuChange(
 	current: ChafaConfig,
 	choice: string,
 	value: string,
 ): ChafaConfig | null {
+	if (hasControlChars(value)) return null;
 	switch (choice) {
 		case "cellWidth": {
 			const parsed = parsePositiveInt(value.trim());
@@ -649,10 +666,7 @@ export function parseSettingArg(
 		};
 	}
 	if (hasControlChars(value)) {
-		return {
-			ok: false,
-			reason: `invalid ${canonical} value (control characters are not allowed)`,
-		};
+		return { ok: false, reason: controlCharReason(canonical) };
 	}
 	const next = applyMenuChange(current, canonical, value);
 	if (!next) {
