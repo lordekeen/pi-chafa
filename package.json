@@ -1,6 +1,6 @@
 {
   "name": "@lordekeen/pi-chafa",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Show image files to the user in the pi terminal — native kitty/iTerm2 where supported, Chafa ANSI symbols everywhere else.",
   "keywords": [
     "pi",
@@ -33,8 +33,12 @@
     "LICENSE"
   ],
   "pi": {
-    "extensions": ["./src/index.ts"],
-    "skills": ["./skills"],
+    "extensions": [
+      "./src/index.ts"
+    ],
+    "skills": [
+      "./skills"
+    ],
     "image": "https://raw.githubusercontent.com/lordekeen/pi-chafa/main/assets/pi-chafa.png"
   },
   "engines": {
