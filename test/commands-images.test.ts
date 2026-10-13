@@ -1172,6 +1172,47 @@ describe("runImagesCommand", () => {
 		).toBe(70);
 	});
 
+	it("attributes a failed command-line write instead of throwing (#061)", async () => {
+		// The panel's save path catches the identical call; the CLI's did not, so an
+		// fs failure escaped as a raw error with no pi-chafa attribution and no
+		// indication of which setting failed.
+		const writer = vi.fn(() => {
+			throw new Error("EACCES: permission denied");
+		});
+		const notifyMock = vi.fn();
+		const ctx = {
+			mode: "tui",
+			hasUI: true,
+			ui: {
+				custom: vi.fn(),
+				select: vi.fn(),
+				notify: notifyMock,
+				input: vi.fn(),
+			},
+		};
+
+		await expect(
+			runImagesCommand({ getAllTools: () => [] } as never, "colors 8", ctx as never, {
+				writeConfigFile: writer,
+			}),
+		).resolves.toBeUndefined();
+
+		expect(notifyMock).toHaveBeenCalledTimes(1);
+		expect(notifyMock).toHaveBeenCalledWith(
+			expect.stringContaining("pi-chafa: could not save colors"),
+			"warning",
+		);
+		// The cause is named, and no success report follows a failed write.
+		expect(notifyMock).toHaveBeenCalledWith(
+			expect.stringContaining("EACCES"),
+			"warning",
+		);
+		expect(notifyMock).not.toHaveBeenCalledWith(
+			expect.stringContaining("is now"),
+			"info",
+		);
+	});
+
 	it("refuses a bad value without writing and without opening the panel (#050)", async () => {
 		const writer = vi.fn(writeConfigFile);
 		const notifyMock = vi.fn();

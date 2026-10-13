@@ -853,10 +853,23 @@ export async function runImagesCommand(
 				reportCommandText(ctx, ui, `pi-chafa: ${parsed.reason}`, "warning");
 				return;
 			}
-			d.writeConfigFile(
-				agentDir,
-				mergeForWrite(fileValues, parsed.next, [canonical]),
-			);
+			// A failed write is reported, not thrown (#061): an fs error escaping as a raw
+			// exception reads as a pi-chafa crash, with no attribution and no hint of
+			// which setting failed. The panel's save path catches the identical call.
+			try {
+				d.writeConfigFile(
+					agentDir,
+					mergeForWrite(fileValues, parsed.next, [canonical]),
+				);
+			} catch (error) {
+				reportCommandText(
+					ctx,
+					ui,
+					`pi-chafa: could not save ${canonical} — ${stripControls((error as Error).message)}`,
+					"warning",
+				);
+				return;
+			}
 			reportCommandText(
 				ctx,
 				ui,
@@ -1002,7 +1015,7 @@ export async function runImagesCommand(
 						});
 					} catch (error) {
 						ui.notify(
-							`pi-chafa: could not save settings — ${(error as Error).message}`,
+							`pi-chafa: could not save settings — ${stripControls((error as Error).message)}`,
 							"warning",
 						);
 						tui.requestRender();
