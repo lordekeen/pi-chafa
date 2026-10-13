@@ -6,7 +6,7 @@ This is a **UI/UX feature, not a vision feature**: the model never receives the 
 
 ![npm version](https://img.shields.io/npm/v/@lordekeen/pi-chafa)
 
-![pi-chafa rendering an image as ANSI symbol art in the terminal](https://raw.githubusercontent.com/<owner>/<repo>/main/assets/pi-chafa.png)
+![pi-chafa rendering an image as ANSI symbol art in the terminal](https://raw.githubusercontent.com/lordekeen/pi-chafa/main/assets/pi-chafa.png)
 
 ## Requirements
 
