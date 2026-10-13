@@ -1,7 +1,17 @@
-import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+	chmodSync,
+	mkdtempSync,
+	readFileSync,
+	rmSync,
+	writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { getSettingsListTheme, initTheme, keyText } from "@earendil-works/pi-coding-agent";
+import {
+	getSettingsListTheme,
+	initTheme,
+	keyText,
+} from "@earendil-works/pi-coding-agent";
 import {
 	getKeybindings,
 	KeybindingsManager,
@@ -9,25 +19,30 @@ import {
 	TUI_KEYBINDINGS,
 } from "@earendil-works/pi-tui";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { DEFAULT_CONFIG, loadConfig, resolveConfig, writeConfigFile } from "../src/config.js";
 import {
-	SETTING_DESCRIPTIONS,
-	SETTING_KEYS,
-	IMAGES_USAGE,
 	applyMenuChange,
 	buildSettingItems,
 	collectRuntimeFacts,
 	controlCharReason,
 	defaultImagesDeps,
 	describeRuntime,
+	IMAGES_USAGE,
 	type ImagesCommandDeps,
 	nearMiss,
 	parseSettingArg,
 	resolveRuntimeCaps,
 	runImagesCommand as runImagesCommandRaw,
 	runtimeStatusSubmenu,
+	SETTING_DESCRIPTIONS,
+	SETTING_KEYS,
 } from "../src/commands/images.js";
-import { COLOR_MODES, DITHER_MODES, type ChafaConfig } from "../src/types.js";
+import {
+	DEFAULT_CONFIG,
+	loadConfig,
+	resolveConfig,
+	writeConfigFile,
+} from "../src/config.js";
+import { type ChafaConfig, COLOR_MODES, DITHER_MODES } from "../src/types.js";
 
 /** A synthetic successful probe — the suite must never spawn the real chafa (#019). */
 const FAKE_PROBE = {
@@ -74,6 +89,127 @@ const runImagesCommand = (
 		...overrides,
 	});
 
+/** The mounted panel, as much of it as a test drives (#064). */
+type PanelHandle = {
+	handleInput: (data: string) => void;
+	render: (width: number) => string[];
+	handleMouse?: (event: Record<string, unknown>) => unknown;
+};
+
+/** What the panel resolves with — the wrapper's `WizardAction` is private to `src/`. */
+type PanelAction = { action: "done" | "cancelled" | "edit"; report?: string };
+
+/**
+ * The fake `ui.custom` a panel test hands the command (#064). It builds the four
+ * things every panel test needs — a fake tui handle, the plain theme, the live
+ * keybindings, a `done` stub — and then follows the test's `onMount`, so each test
+ * keeps its own context object and assertions instead of re-deriving the plumbing.
+ *
+ * `outcome` is what the mount resolves with — the action the command reads as the
+ * panel's result — either fixed or per mount index. With `keepOpen` the first mount
+ * instead returns a promise the test settles through `done()`; that resolver is armed
+ * BEFORE `onMount` runs, because `done()` can fire inside it (Esc, Ctrl+S) and must
+ * land on a live resolver, or the command's promise never settles.
+ */
+const fakePanel = (opts: {
+	onMount?: (component: PanelHandle, mountIndex: number) => void;
+	/** `undefined` for a mount leaves it to `keepOpen`/`lastAction` below. */
+	outcome?: PanelAction | ((mountIndex: number) => PanelAction | undefined);
+	keepOpen?: boolean;
+	/** Observe `done()`, for a test that manages its own resolver. */
+	onDone?: (result: unknown) => void;
+	/** Row theme override, for the tests that assert themed output. */
+	theme?: {
+		fg: (color: string, text: string) => string;
+		bold: (text: string) => string;
+	};
+}) => {
+	let resolvePanel: (r: unknown) => void = () => {};
+	let lastAction: unknown = { action: "done" };
+	const mock = vi.fn().mockImplementation(async (cb) => {
+		const mountIndex = mock.mock.calls.length;
+		const pending =
+			opts.keepOpen && mountIndex === 1
+				? new Promise((res) => {
+						resolvePanel = res;
+					})
+				: undefined;
+		const component = cb(
+			{ requestRender: vi.fn() },
+			opts.theme ?? {
+				fg: (_c: string, text: string) => text,
+				bold: (text: string) => text,
+			},
+			getKeybindings(),
+			(r: unknown) => {
+				lastAction = r;
+				opts.onDone?.(r);
+				resolvePanel(r);
+			},
+		) as PanelHandle;
+		opts.onMount?.(component, mountIndex);
+		const outcome =
+			typeof opts.outcome === "function"
+				? opts.outcome(mountIndex)
+				: opts.outcome;
+		if (outcome) return outcome;
+		return mountIndex === 1 ? pending : lastAction; // the action the keys produced
+	});
+	return mock;
+};
+
+/**
+ * Mount the `/images` panel through `ui.custom` and run the command (#064): the
+ * `fakePanel` fixture plus the command invocation every panel test repeats. `outcome`
+ * and `simulate` describe the panel's behaviour; without an `outcome` the panel stays
+ * open until the test's keys call `done()`.
+ */
+const mountPanel = async (opts: {
+	simulate?: (component: PanelHandle, mountIndex: number) => void;
+	outcome?: PanelAction | ((mountIndex: number) => PanelAction);
+	args?: string;
+	mode?: "tui" | "rpc" | "print" | "json";
+	deps?: Partial<ImagesCommandDeps>;
+	input?: (prompt: string) => string | undefined;
+	select?: (prompt: string) => string | undefined;
+}) => {
+	const userInput = opts.input ?? (() => undefined);
+	const userSelect = vi.fn(async (prompt: string) => opts.select?.(prompt));
+	const notifyMock = vi.fn();
+	let mounted: PanelHandle | undefined;
+	const customMock = fakePanel({
+		keepOpen: opts.outcome === undefined,
+		outcome: opts.outcome,
+		onMount: (component, mountIndex) => {
+			if (mountIndex === 1) mounted = component;
+			opts.simulate?.(component, mountIndex);
+		},
+	});
+	const run = runImagesCommand(
+		{ getAllTools: () => [] } as never,
+		(opts.args ?? "") as never,
+		{
+			mode: opts.mode ?? "tui",
+			hasUI: true,
+			ui: {
+				custom: customMock,
+				select: userSelect,
+				notify: notifyMock,
+				input: userInput,
+			},
+		} as never,
+		opts.deps,
+	);
+	return {
+		run,
+		notifyMock,
+		selectMock: userSelect,
+		inputMock: userInput,
+		customMock,
+		mounted: () => mounted,
+	};
+};
+
 describe("SETTING_DESCRIPTIONS", () => {
 	it("provides non-empty descriptions for all settings and actions", () => {
 		const expectedKeys = [
@@ -110,8 +246,12 @@ describe("buildSettingItems", () => {
 		expect(binary.currentValue).toBe("/evilbin/chafa");
 		// The ladder is offered for cycling, so it cannot carry the raw value either:
 		// staging it would be refused by the funnel and the row would look stuck.
-		expect(symbols.values?.some((value) => value.includes("\u001b"))).toBe(false);
-		expect(binary.values?.some((value) => value.includes("\u001b"))).toBe(false);
+		expect(symbols.values?.some((value) => value.includes("\u001b"))).toBe(
+			false,
+		);
+		expect(binary.values?.some((value) => value.includes("\u001b"))).toBe(
+			false,
+		);
 	});
 
 	it("builds settings list items matching config and presets", () => {
@@ -141,7 +281,9 @@ describe("buildSettingItems", () => {
 		const preferNativeItem = items.find((i) => i.id === "preferNative")!;
 		expect(preferNativeItem.currentValue).toBe("true");
 		expect(preferNativeItem.values).toEqual(["true", "false"]);
-		expect(preferNativeItem.description).toBe(SETTING_DESCRIPTIONS.preferNative);
+		expect(preferNativeItem.description).toBe(
+			SETTING_DESCRIPTIONS.preferNative,
+		);
 
 		const colorsItem = items.find((i) => i.id === "colors")!;
 		expect(colorsItem.currentValue).toBe("full");
@@ -274,14 +416,20 @@ describe("applyMenuChange", () => {
 	});
 
 	it("validates dither mode against the enum and rejects bad input", () => {
-		expect(applyMenuChange(base, "dither", "diffusion")!.dither).toBe("diffusion");
+		expect(applyMenuChange(base, "dither", "diffusion")!.dither).toBe(
+			"diffusion",
+		);
 		expect(applyMenuChange(base, "dither", "ordered")!.dither).toBe("ordered");
 		expect(applyMenuChange(base, "dither", "invalid")).toBeNull();
 	});
 
 	it("validates symbolsSet rejects empty string", () => {
-		expect(applyMenuChange(base, "symbolsSet", "ascii")!.symbolsSet).toBe("ascii");
-		expect(applyMenuChange(base, "symbolsSet", "braille")!.symbolsSet).toBe("braille");
+		expect(applyMenuChange(base, "symbolsSet", "ascii")!.symbolsSet).toBe(
+			"ascii",
+		);
+		expect(applyMenuChange(base, "symbolsSet", "braille")!.symbolsSet).toBe(
+			"braille",
+		);
 		expect(applyMenuChange(base, "symbolsSet", "   ")).toBeNull();
 	});
 
@@ -291,8 +439,12 @@ describe("applyMenuChange", () => {
 			applyMenuChange({ ...base, preferNative: false }, "preferNative", "")!
 				.preferNative,
 		).toBe(true);
-		expect(applyMenuChange(base, "preferNative", "true")!.preferNative).toBe(true);
-		expect(applyMenuChange(base, "preferNative", "false")!.preferNative).toBe(false);
+		expect(applyMenuChange(base, "preferNative", "true")!.preferNative).toBe(
+			true,
+		);
+		expect(applyMenuChange(base, "preferNative", "false")!.preferNative).toBe(
+			false,
+		);
 		expect(applyMenuChange(base, "preferNative", "maybe")).toBeNull();
 	});
 
@@ -300,11 +452,13 @@ describe("applyMenuChange", () => {
 		expect(applyMenuChange(base, "binaryPath", "/opt/chafa")!.binaryPath).toBe(
 			"/opt/chafa",
 		);
-		expect(applyMenuChange(base, "binaryPath", "/usr/bin/chafa")!.binaryPath).toBe(
-			"/usr/bin/chafa",
-		);
+		expect(
+			applyMenuChange(base, "binaryPath", "/usr/bin/chafa")!.binaryPath,
+		).toBe("/usr/bin/chafa");
 		expect(applyMenuChange(base, "binaryPath", "")!.binaryPath).toBeNull();
-		expect(applyMenuChange(base, "binaryPath", "(auto on PATH)")!.binaryPath).toBeNull();
+		expect(
+			applyMenuChange(base, "binaryPath", "(auto on PATH)")!.binaryPath,
+		).toBeNull();
 		expect(applyMenuChange(base, "binaryPath", "   ")!.binaryPath).toBeNull();
 	});
 
@@ -413,7 +567,11 @@ describe("parseSettingArg (#050)", () => {
 	});
 
 	it("refuses a value carrying control characters instead of storing them (invariant 3)", () => {
-		const result = parseSettingArg(DEFAULT_CONFIG, "symbolsSet", "\u001b[31mblock");
+		const result = parseSettingArg(
+			DEFAULT_CONFIG,
+			"symbolsSet",
+			"\u001b[31mblock",
+		);
 		expect(result.ok).toBe(false);
 		if (!result.ok) expect(result.reason).not.toContain("\u001b");
 	});
@@ -447,7 +605,13 @@ describe("resolveRuntimeCaps", () => {
 	});
 	it("reports none when the #026 environment guard denies a declaration", () => {
 		expect(
-			resolveRuntimeCaps(null, "kitty", "kitty", { TERM_PROGRAM: "alacritty" }, "linux"),
+			resolveRuntimeCaps(
+				null,
+				"kitty",
+				"kitty",
+				{ TERM_PROGRAM: "alacritty" },
+				"linux",
+			),
 		).toEqual({ capsImages: null, capsSource: "none" });
 	});
 	it("reports PI_IMAGE_PROTOCOL provenance for the tmux opt-in (#026)", () => {
@@ -556,7 +720,9 @@ describe("runtimeStatusSubmenu (#049)", () => {
 
 	it("renders the fact lines that replace the rows", () => {
 		const component = runtimeStatusSubmenu(LINES, getKeybindings(), () => {});
-		expect(component.render(80).join("\n")).toContain("Detected image protocol: kitty");
+		expect(component.render(80).join("\n")).toContain(
+			"Detected image protocol: kitty",
+		);
 		expect(component.render(80).join("\n")).toContain("chafa: 1.18 (chafa)");
 	});
 
@@ -642,14 +808,11 @@ describe("runImagesCommand", () => {
 		const notifyMock = vi.fn();
 		let componentCreated: { render: (w: number) => string[] } | undefined;
 
-		const customMock = vi.fn().mockImplementation(async (cb) => {
-			const tui = { requestRender: vi.fn() };
-			const theme = {
-				fg: (_c: string, text: string) => text,
-				bold: (text: string) => text,
-			};
-			componentCreated = cb(tui, theme, getKeybindings(), () => {});
-			return { action: "done" };
+		const customMock = fakePanel({
+			outcome: { action: "done" },
+			onMount: (component) => {
+				componentCreated = component;
+			},
 		});
 
 		const ctx = {
@@ -683,46 +846,30 @@ describe("runImagesCommand", () => {
 		setKeybindings(remapped);
 		const selectMock = vi.fn().mockResolvedValue(undefined); // dismiss the picker
 		const inputMock = vi.fn();
-		let resolvePanel: (r: unknown) => void = () => {};
+		const resolvePanel: (r: unknown) => void = () => {};
 		let mounted: { handleInput: (d: string) => void } | undefined;
 		try {
-			const customMock = vi.fn().mockImplementation(async (cb) => {
-				const component = cb(
-					{ requestRender: vi.fn() },
-					{
-						fg: (_c: string, text: string) => text,
-						bold: (text: string) => text,
-					},
-					getKeybindings(),
-					(r: unknown) => resolvePanel(r),
-				) as { handleInput: (d: string) => void };
-				mounted = component;
-				if (customMock.mock.calls.length === 1) {
-					// Wire the resolver BEFORE pressing 'e': done() fires during the
-					// simulation and must land on a live resolver.
-					const promise = new Promise((res) => {
-						resolvePanel = res;
-					});
+			const customMock = fakePanel({
+				keepOpen: true,
+				outcome: (mountIndex) =>
+					mountIndex === 1 ? undefined : { action: "done" },
+				onDone: (r) => resolvePanel(r),
+				onMount: (component, mountIndex) => {
+					mounted = component;
 					// 'e' no longer consults the highlight: no navigation keys pressed.
-					component.handleInput("e");
-					return promise;
-				}
-				return { action: "done" };
+					if (mountIndex === 1) component.handleInput("e");
+				},
 			});
-			const run = runImagesCommand(
-				{ getAllTools: () => [] } as never,
-				"",
-				{
-					mode: "tui",
-					hasUI: true,
-					ui: {
-						custom: customMock,
-						select: selectMock,
-						notify: vi.fn(),
-						input: inputMock,
-					},
-				} as never,
-			);
+			const run = runImagesCommand({ getAllTools: () => [] } as never, "", {
+				mode: "tui",
+				hasUI: true,
+				ui: {
+					custom: customMock,
+					select: selectMock,
+					notify: vi.fn(),
+					input: inputMock,
+				},
+			} as never);
 			await vi.waitFor(() => {
 				expect(selectMock).toHaveBeenCalledTimes(1);
 			});
@@ -755,33 +902,22 @@ describe("runImagesCommand", () => {
 		setKeybindings(remapped);
 		let rendered: string[] = [];
 		try {
-			const customMock = vi.fn().mockImplementation(async (cb) => {
-				const component = cb(
-					{ requestRender: vi.fn() },
-					{
-						fg: (_c: string, text: string) => text,
-						bold: (text: string) => text,
-					},
-					getKeybindings(),
-					() => {},
-				) as { render: (w: number) => string[] };
-				rendered = component.render(80);
-				return { action: "cancelled" };
+			const customMock = fakePanel({
+				outcome: { action: "cancelled" },
+				onMount: (component) => {
+					rendered = component.render(80);
+				},
 			});
-			await runImagesCommand(
-				{ getAllTools: () => [] } as never,
-				"",
-				{
-					mode: "tui",
-					hasUI: true,
-					ui: {
-						custom: customMock,
-						select: vi.fn(),
-						notify: vi.fn(),
-						input: vi.fn(),
-					},
-				} as never,
-			);
+			await runImagesCommand({ getAllTools: () => [] } as never, "", {
+				mode: "tui",
+				hasUI: true,
+				ui: {
+					custom: customMock,
+					select: vi.fn(),
+					notify: vi.fn(),
+					input: vi.fn(),
+				},
+			} as never);
 		} finally {
 			setKeybindings(originalKb);
 		}
@@ -795,35 +931,24 @@ describe("runImagesCommand", () => {
 	it("opens the runtime facts as an in-panel submenu instead of a dialog (#049)", async () => {
 		const selectMock = vi.fn();
 		let rendered: string[] = [];
-		const customMock = vi.fn().mockImplementation(async (cb) => {
-			const component = cb(
-				{ requestRender: vi.fn() },
-				{
-					fg: (_c: string, text: string) => text,
-					bold: (text: string) => text,
-				},
-				getKeybindings(),
-				() => {},
-			) as { handleInput: (d: string) => void; render: (w: number) => string[] };
-			for (let i = 0; i < 8; i++) component.handleInput("\x1b[B"); // → Runtime status
-			component.handleInput("\r"); // Enter: the list owns activation now
-			rendered = component.render(80);
-			return { action: "cancelled" };
+		const customMock = fakePanel({
+			outcome: { action: "cancelled" },
+			onMount: (component) => {
+				for (let i = 0; i < 8; i++) component.handleInput("\x1b[B"); // → Runtime status
+				component.handleInput("\r"); // Enter: the list owns activation now
+				rendered = component.render(80);
+			},
 		});
-		await runImagesCommand(
-			{ getAllTools: () => [] } as never,
-			"",
-			{
-				mode: "tui",
-				hasUI: true,
-				ui: {
-					custom: customMock,
-					select: selectMock,
-					notify: vi.fn(),
-					input: vi.fn(),
-				},
-			} as never,
-		);
+		await runImagesCommand({ getAllTools: () => [] } as never, "", {
+			mode: "tui",
+			hasUI: true,
+			ui: {
+				custom: customMock,
+				select: selectMock,
+				notify: vi.fn(),
+				input: vi.fn(),
+			},
+		} as never);
 		// An open submenu renders in place of the rows, so the facts are visible in-panel…
 		expect(rendered.join("\n")).toContain("Detected image protocol: ");
 		expect(rendered.join("\n")).toContain("Host showImages: ");
@@ -840,34 +965,23 @@ describe("runImagesCommand", () => {
 			  }
 			| undefined;
 		let lines: string[] = [];
-		const customMock = vi.fn().mockImplementation(async (cb) => {
-			const component = cb(
-				{ requestRender: vi.fn() },
-				{
-					fg: (_c: string, text: string) => text,
-					bold: (text: string) => text,
-				},
-				getKeybindings(),
-				() => {},
-			) as NonNullable<typeof panel>;
-			panel = component;
-			lines = component.render(80);
-			return { action: "cancelled" };
+		const customMock = fakePanel({
+			outcome: { action: "cancelled" },
+			onMount: (component) => {
+				panel = component as NonNullable<typeof panel>;
+				lines = component.render(80);
+			},
 		});
-		await runImagesCommand(
-			{ getAllTools: () => [] } as never,
-			"",
-			{
-				mode: "tui",
-				hasUI: true,
-				ui: {
-					custom: customMock,
-					select: vi.fn(),
-					notify: vi.fn(),
-					input: vi.fn(),
-				},
-			} as never,
-		);
+		await runImagesCommand({ getAllTools: () => [] } as never, "", {
+			mode: "tui",
+			hasUI: true,
+			ui: {
+				custom: customMock,
+				select: vi.fn(),
+				notify: vi.fn(),
+				input: vi.fn(),
+			},
+		} as never);
 		// Mouse only reaches the mounted component, so this is what proves the panel is
 		// the Container rather than a plain object wrapping one.
 		expect(panel?.handleMouse).toBeTypeOf("function");
@@ -907,39 +1021,33 @@ describe("runImagesCommand", () => {
 
 	it("themes and aligns the title, and puts the key hint under the list (#056)", async () => {
 		let rendered: string[] = [];
-		const customMock = vi.fn().mockImplementation(async (cb) => {
-			const component = cb(
-				{ requestRender: vi.fn() },
-				{
-					fg: (_c: string, text: string) => text,
-					bold: (text: string) => `*${text}*`,
-				},
-				getKeybindings(),
-				() => {},
-			) as { render: (w: number) => string[] };
-			rendered = component.render(80);
-			return { action: "cancelled" };
+		const customMock = fakePanel({
+			outcome: { action: "cancelled" },
+			theme: { fg: (_c, text) => text, bold: (text) => `*${text}*` },
+			onMount: (component) => {
+				rendered = component.render(80);
+			},
 		});
-		await runImagesCommand(
-			{ getAllTools: () => [] } as never,
-			"",
-			{
-				mode: "tui",
-				hasUI: true,
-				ui: {
-					custom: customMock,
-					select: vi.fn(),
-					notify: vi.fn(),
-					input: vi.fn(),
-				},
-			} as never,
-		);
+		await runImagesCommand({ getAllTools: () => [] } as never, "", {
+			mode: "tui",
+			hasUI: true,
+			ui: {
+				custom: customMock,
+				select: vi.fn(),
+				notify: vi.fn(),
+				input: vi.fn(),
+			},
+		} as never);
 		// Themed bold, in the same two-column gutter the list's rows use.
-		const titleLine = rendered.find((line) => line.includes("pi-chafa Settings"));
+		const titleLine = rendered.find((line) =>
+			line.includes("pi-chafa Settings"),
+		);
 		expect(titleLine).toContain("*pi-chafa Settings*");
 		expect(titleLine?.startsWith("  *")).toBe(true);
 		// The panel's key hint sits below the rows (and below the host's own line).
-		const rowIndex = rendered.findIndex((line) => line.includes("Prefer native"));
+		const rowIndex = rendered.findIndex((line) =>
+			line.includes("Prefer native"),
+		);
 		const hintIndex = rendered.findIndex((line) => line.includes("navigate"));
 		expect(rowIndex).toBeGreaterThan(-1);
 		expect(hintIndex).toBeGreaterThan(rowIndex);
@@ -947,33 +1055,23 @@ describe("runImagesCommand", () => {
 
 	it("frames the panel with the host's full-width rule top and bottom (#057)", async () => {
 		let rendered: string[] = [];
-		const customMock = vi.fn().mockImplementation(async (cb) => {
-			const component = cb(
-				{ requestRender: vi.fn() },
-				{
-					fg: (_c: string, text: string) => text,
-					bold: (text: string) => `*${text}*`,
-				},
-				getKeybindings(),
-				() => {},
-			) as { render: (w: number) => string[] };
-			rendered = component.render(80);
-			return { action: "cancelled" };
+		const customMock = fakePanel({
+			outcome: { action: "cancelled" },
+			theme: { fg: (_c, text) => text, bold: (text) => `*${text}*` },
+			onMount: (component) => {
+				rendered = component.render(80);
+			},
 		});
-		await runImagesCommand(
-			{ getAllTools: () => [] } as never,
-			"",
-			{
-				mode: "tui",
-				hasUI: true,
-				ui: {
-					custom: customMock,
-					select: vi.fn(),
-					notify: vi.fn(),
-					input: vi.fn(),
-				},
-			} as never,
-		);
+		await runImagesCommand({ getAllTools: () => [] } as never, "", {
+			mode: "tui",
+			hasUI: true,
+			ui: {
+				custom: customMock,
+				select: vi.fn(),
+				notify: vi.fn(),
+				input: vi.fn(),
+			},
+		} as never);
 		// The host's DynamicBorder renders one full-width rule: the panel opens and
 		// closes with it, exactly as pi's own /settings panel does (settings-selector).
 		expect(rendered[0]).toBe("─".repeat(80));
@@ -990,7 +1088,12 @@ describe("runImagesCommand", () => {
 		const ctx = {
 			mode: "tui",
 			hasUI: true,
-			ui: { custom: customMock, select: selectMock, notify: notifyMock, input: vi.fn() },
+			ui: {
+				custom: customMock,
+				select: selectMock,
+				notify: notifyMock,
+				input: vi.fn(),
+			},
 		};
 
 		await runImagesCommand(pi as never, "status", ctx as never);
@@ -1015,7 +1118,12 @@ describe("runImagesCommand", () => {
 			await runImagesCommand(pi as never, arg, {
 				mode: "tui",
 				hasUI: true,
-				ui: { custom: customMock, select: vi.fn(), notify: notifyMock, input: vi.fn() },
+				ui: {
+					custom: customMock,
+					select: vi.fn(),
+					notify: notifyMock,
+					input: vi.fn(),
+				},
 			} as never);
 			expect(customMock).not.toHaveBeenCalled();
 			expect(notifyMock).toHaveBeenCalledTimes(1);
@@ -1050,9 +1158,14 @@ describe("runImagesCommand", () => {
 		for (const [args, key, expected] of cases) {
 			writer.mockClear();
 			notifyMock.mockClear();
-			await runImagesCommand({ getAllTools: () => [] } as never, args, ctx as never, {
-				writeConfigFile: writer,
-			});
+			await runImagesCommand(
+				{ getAllTools: () => [] } as never,
+				args,
+				ctx as never,
+				{
+					writeConfigFile: writer,
+				},
+			);
 			// Exactly one write, and a report naming the key, the new value and the file.
 			expect(writer).toHaveBeenCalledTimes(1);
 			expect(loadConfig(testDir)[key]).toEqual(expected);
@@ -1104,7 +1217,10 @@ describe("runImagesCommand", () => {
 	});
 
 	it("keeps the file's own values when writing a different key (#058)", async () => {
-		writeFileSync(join(testDir, "pi-chafa.json"), JSON.stringify({ colors: "16" }));
+		writeFileSync(
+			join(testDir, "pi-chafa.json"),
+			JSON.stringify({ colors: "16" }),
+		);
 		const writer = vi.fn(writeConfigFile);
 		const ctx = {
 			mode: "tui",
@@ -1211,9 +1327,14 @@ describe("runImagesCommand", () => {
 		};
 
 		await expect(
-			runImagesCommand({ getAllTools: () => [] } as never, "colors 8", ctx as never, {
-				writeConfigFile: writer,
-			}),
+			runImagesCommand(
+				{ getAllTools: () => [] } as never,
+				"colors 8",
+				ctx as never,
+				{
+					writeConfigFile: writer,
+				},
+			),
 		).resolves.toBeUndefined();
 
 		expect(notifyMock).toHaveBeenCalledTimes(1);
@@ -1266,18 +1387,7 @@ describe("runImagesCommand", () => {
 	it("keeps the unknown-argument fallback: warn with the keys, no write, open the panel (#050)", async () => {
 		const writer = vi.fn(writeConfigFile);
 		const notifyMock = vi.fn();
-		const customMock = vi.fn().mockImplementation(async (cb) => {
-			cb(
-				{ requestRender: vi.fn() },
-				{
-					fg: (_c: string, text: string) => text,
-					bold: (text: string) => text,
-				},
-				getKeybindings(),
-				() => {},
-			);
-			return { action: "done" };
-		});
+		const customMock = fakePanel({ outcome: { action: "done" } });
 
 		await runImagesCommand(
 			{ getAllTools: () => [] } as never,
@@ -1407,19 +1517,16 @@ describe("runImagesCommand", () => {
 	it("warns and still opens the settings panel for an unknown argument (#016)", async () => {
 		const pi = { getAllTools: () => [] };
 		const notifyMock = vi.fn();
-		const customMock = vi.fn().mockImplementation(async (cb) => {
-			const tui = { requestRender: vi.fn() };
-			const theme = {
-				fg: (_c: string, text: string) => text,
-				bold: (text: string) => text,
-			};
-			cb(tui, theme, getKeybindings(), () => {});
-			return { action: "done" };
-		});
+		const customMock = fakePanel({ outcome: { action: "done" } });
 		const ctx = {
 			mode: "tui",
 			hasUI: true,
-			ui: { custom: customMock, select: vi.fn(), notify: notifyMock, input: vi.fn() },
+			ui: {
+				custom: customMock,
+				select: vi.fn(),
+				notify: notifyMock,
+				input: vi.fn(),
+			},
 		};
 
 		await runImagesCommand(pi as never, "bogus", ctx as never);
@@ -1437,18 +1544,7 @@ describe("runImagesCommand", () => {
 			["bogus", false],
 		] as const) {
 			const notifyMock = vi.fn();
-			const customMock = vi.fn().mockImplementation(async (cb) => {
-				cb(
-					{ requestRender: vi.fn() },
-					{
-						fg: (_c: string, text: string) => text,
-						bold: (text: string) => text,
-					},
-					getKeybindings(),
-					() => {},
-				);
-				return { action: "cancelled" };
-			});
+			const customMock = fakePanel({ outcome: { action: "cancelled" } });
 
 			await runImagesCommand({ getAllTools: () => [] } as never, arg, {
 				mode: "tui",
@@ -1476,19 +1572,16 @@ describe("runImagesCommand", () => {
 	it("sanitizes control characters in an unknown argument before notifying (#016)", async () => {
 		const pi = { getAllTools: () => [] };
 		const notifyMock = vi.fn();
-		const customMock = vi.fn().mockImplementation(async (cb) => {
-			const tui = { requestRender: vi.fn() };
-			const theme = {
-				fg: (_c: string, text: string) => text,
-				bold: (text: string) => text,
-			};
-			cb(tui, theme, getKeybindings(), () => {});
-			return { action: "done" };
-		});
+		const customMock = fakePanel({ outcome: { action: "done" } });
 		const ctx = {
 			mode: "tui",
 			hasUI: true,
-			ui: { custom: customMock, select: vi.fn(), notify: notifyMock, input: vi.fn() },
+			ui: {
+				custom: customMock,
+				select: vi.fn(),
+				notify: notifyMock,
+				input: vi.fn(),
+			},
 		};
 
 		await runImagesCommand(pi as never, "bo\u001b[31mgus", ctx as never);
@@ -1580,19 +1673,13 @@ describe("runImagesCommand", () => {
 		let handleInput: ((data: string) => void) | undefined;
 		let rendered: string[] = [];
 
-		const customMock = vi.fn().mockImplementation(async (cb) => {
-			const tui = { requestRender: vi.fn() };
-			const theme = {
-				fg: (_c: string, text: string) => text,
-				bold: (text: string) => text,
-			};
-			const component = cb(tui, theme, getKeybindings(), doneMock) as {
-				render: (w: number) => string[];
-				handleInput: (data: string) => void;
-			};
-			handleInput = component.handleInput;
-			rendered = component.render(80);
-			return { action: "done" };
+		const customMock = fakePanel({
+			outcome: { action: "done" },
+			onDone: (result) => doneMock(result),
+			onMount: (component) => {
+				handleInput = component.handleInput;
+				rendered = component.render(80);
+			},
 		});
 
 		const ctx = {
@@ -1609,7 +1696,9 @@ describe("runImagesCommand", () => {
 		await runImagesCommand(pi as never, "", ctx as never);
 
 		expect(handleInput).toBeDefined();
-		expect(rendered.join("\n")).toContain(`${keyText("tui.select.cancel")}/q close`);
+		expect(rendered.join("\n")).toContain(
+			`${keyText("tui.select.cancel")}/q close`,
+		);
 		handleInput?.("q");
 		expect(doneMock).toHaveBeenCalledWith({ action: "cancelled" });
 	});
@@ -1619,17 +1708,12 @@ describe("runImagesCommand", () => {
 		const doneMock = vi.fn();
 		let handleInput: ((data: string) => void) | undefined;
 
-		const customMock = vi.fn().mockImplementation(async (cb) => {
-			const tui = { requestRender: vi.fn() };
-			const theme = {
-				fg: (_c: string, text: string) => text,
-				bold: (text: string) => text,
-			};
-			const component = cb(tui, theme, getKeybindings(), doneMock) as {
-				handleInput: (data: string) => void;
-			};
-			handleInput = component.handleInput;
-			return { action: "done" };
+		const customMock = fakePanel({
+			outcome: { action: "done" },
+			onDone: (result) => doneMock(result),
+			onMount: (component) => {
+				handleInput = component.handleInput;
+			},
 		});
 
 		const ctx = {
@@ -1654,17 +1738,12 @@ describe("runImagesCommand", () => {
 		const doneMock = vi.fn();
 		let handleInput: ((data: string) => void) | undefined;
 
-		const customMock = vi.fn().mockImplementation(async (cb) => {
-			const tui = { requestRender: vi.fn() };
-			const theme = {
-				fg: (_c: string, text: string) => text,
-				bold: (text: string) => text,
-			};
-			const component = cb(tui, theme, getKeybindings(), doneMock) as {
-				handleInput: (data: string) => void;
-			};
-			handleInput = component.handleInput;
-			return { action: "done" };
+		const customMock = fakePanel({
+			outcome: { action: "done" },
+			onDone: (result) => doneMock(result),
+			onMount: (component) => {
+				handleInput = component.handleInput;
+			},
 		});
 
 		const ctx = {
@@ -1691,20 +1770,11 @@ describe("runImagesCommand", () => {
 		const notifyMock = vi.fn();
 		const inputMock = vi.fn().mockResolvedValue("/custom/chafa");
 
-		let invocation = 0;
-		const customMock = vi.fn().mockImplementation(async (cb) => {
-			invocation++;
-			const tui = { requestRender: vi.fn() };
-			const theme = {
-				fg: (_c: string, text: string) => text,
-				bold: (text: string) => text,
-			};
-			cb(tui, theme, getKeybindings(), () => {});
-			if (invocation === 1) {
-				return { action: "edit" };
-			}
+		const invocation = 0;
+		const customMock = fakePanel({
 			// Staged (#046): the dialog value lands in the draft; Ctrl+S writes it.
-			return { action: "done", report: undefined };
+			outcome: (mountIndex) =>
+				mountIndex === 1 ? { action: "edit" } : { action: "done" },
 		});
 
 		const ctx = {
@@ -1819,23 +1889,14 @@ describe("runImagesCommand", () => {
 		const notifyMock = vi.fn();
 		const inputMock = vi.fn().mockResolvedValue("30000");
 
-		let invocation = 0;
+		const invocation = 0;
 		let panel: { handleInput: (d: string) => void } | undefined;
-		const customMock = vi.fn().mockImplementation(async (cb) => {
-			invocation++;
-			const tui = { requestRender: vi.fn() };
-			const theme = {
-				fg: (_c: string, text: string) => text,
-				bold: (text: string) => text,
-			};
-			const component = cb(tui, theme, getKeybindings(), () => {}) as {
-				handleInput: (d: string) => void;
-			};
-			if (invocation === 1) {
-				return { action: "edit" };
-			}
-			panel = component;
-			return { action: "done" };
+		const customMock = fakePanel({
+			outcome: (mountIndex) =>
+				mountIndex === 1 ? { action: "edit" } : { action: "done" },
+			onMount: (component, mountIndex) => {
+				if (mountIndex > 1) panel = component;
+			},
 		});
 
 		const ctx = {
@@ -1866,17 +1927,10 @@ describe("runImagesCommand", () => {
 		const notifyMock = vi.fn();
 		const inputMock = vi.fn().mockResolvedValue("-4");
 
-		let invocation = 0;
-		const customMock = vi.fn().mockImplementation(async (cb) => {
-			invocation++;
-			const tui = { requestRender: vi.fn() };
-			const theme = {
-				fg: (_c: string, text: string) => text,
-				bold: (text: string) => text,
-			};
-			cb(tui, theme, getKeybindings(), () => {});
-			if (invocation === 1) return { action: "edit" };
-			return { action: "done" };
+		const invocation = 0;
+		const customMock = fakePanel({
+			outcome: (mountIndex) =>
+				mountIndex === 1 ? { action: "edit" } : { action: "done" },
 		});
 
 		const ctx = {
@@ -1921,276 +1975,236 @@ describe("runImagesCommand", () => {
 		const statusOptions = selectMock.mock.calls[1]?.[1] as string[];
 		expect(statusOptions.join("\n")).toContain("Detected image protocol: ");
 		expect(statusOptions.join("\n")).toContain("Host showImages: ");
-		expect(statusOptions.join("\n")).toContain("pi-pretty-style read override: ");
+		expect(statusOptions.join("\n")).toContain(
+			"pi-pretty-style read override: ",
+		);
 		expect(statusOptions.join("\n")).toContain("chafa: ");
 	});
 
 	describe("staged persistence (#045)", () => {
-	const mountPanel = async (opts: {
-		simulate?: (
-			component: {
-				handleInput: (d: string) => void;
-				render: (w: number) => string[];
-			},
-			mountIndex: number,
-		) => void;
-		deps?: Parameters<typeof runImagesCommandRaw>[3];
-		input?: (prompt: string) => string | undefined;
-		select?: (prompt: string) => string | undefined;
-	}) => {
-		const userInput = opts.input ?? (() => undefined);
-		const userSelect = vi.fn(async (prompt: string) => opts.select?.(prompt));
-		const notifyMock = vi.fn();
-		let resolvePanel: (r: unknown) => void = () => {};
-		let lastAction: unknown = { action: "done" };
-		let mounted: { handleInput: (d: string) => void; render: (w: number) => string[] } | undefined;
-		const customMock = vi.fn().mockImplementation(async (cb) => {
-			const component = cb(
-				{ requestRender: vi.fn() },
-				{
-					fg: (_c: string, text: string) => text,
-					bold: (text: string) => text,
+		it("styles the panel rows with the injected host theme (#051)", async () => {
+			const marker = {
+				label: (text: string, selected: boolean) =>
+					selected ? `SEL<${text}>` : text,
+				value: (text: string) => text,
+				description: (text: string) => text,
+				cursor: "→ ",
+				hint: (text: string) => text,
+			};
+			let panel: { render: (w: number) => string[] } | undefined;
+			const { run } = await mountPanel({
+				deps: { settingsListTheme: () => marker },
+				simulate: (c) => {
+					panel = c;
+					c.handleInput("\x1b"); // Esc: close so the command completes
 				},
-				getKeybindings(),
-				(r: unknown) => {
-					lastAction = r;
-					resolvePanel(r);
+			});
+			await run;
+			// The marker proves the injected theme reaches SettingsList's rows.
+			expect(panel?.render(80).join("\n")).toContain("SEL<");
+		});
+
+		it("stages edits: Esc discards and the file stays byte-identical (#045)", async () => {
+			writeFileSync(
+				join(testDir, "pi-chafa.json"),
+				JSON.stringify({ cellWidth: 71 }),
+			);
+			const before = readFileSync(join(testDir, "pi-chafa.json"), "utf8");
+			const { run, notifyMock } = await mountPanel({
+				simulate: (c) => {
+					c.handleInput("\r"); // cycle Prefer native → false
+					c.handleInput("\x1b"); // Esc: cancel
 				},
-			) as { handleInput: (d: string) => void; render: (w: number) => string[] };
-			if (customMock.mock.calls.length === 1) {
-				mounted = component;
-				// Wire the resolver BEFORE simulating keys: done() can fire during
-				// the simulation (Esc, Ctrl+S) and must land on a live resolver.
-				const promise = new Promise((res) => {
-					resolvePanel = res;
-				});
-				opts.simulate?.(component, 1);
-				return promise;
-			}
-			opts.simulate?.(component, customMock.mock.calls.length);
-			return lastAction; // the action the simulated keys produced
+			});
+			await run;
+			expect(readFileSync(join(testDir, "pi-chafa.json"), "utf8")).toBe(before);
+			expect(notifyMock).toHaveBeenCalledWith(
+				"pi-chafa: settings unchanged (cancelled)",
+				"info",
+			);
 		});
-		const run = runImagesCommand(
-			{ getAllTools: () => [] } as never,
-			"",
-			{
-				mode: "tui",
-				hasUI: true,
-				ui: {
-					custom: customMock,
-					select: userSelect,
-					notify: notifyMock,
-					input: userInput,
+
+		it("treats q as a reported cancel and leaves the file byte-identical (#048)", async () => {
+			writeFileSync(
+				join(testDir, "pi-chafa.json"),
+				JSON.stringify({ cellWidth: 71 }),
+			);
+			const before = readFileSync(join(testDir, "pi-chafa.json"), "utf8");
+			const { run, notifyMock } = await mountPanel({
+				simulate: (c) => {
+					c.handleInput("\r"); // cycle Prefer native → false: the draft is dirty
+					c.handleInput("q"); // must cancel AND report, never discard silently
 				},
-			} as never,
-			opts.deps,
-		);
-		return { run, notifyMock, mounted: () => mounted };
-	};
-
-	it("styles the panel rows with the injected host theme (#051)", async () => {
-		const marker = {
-			label: (text: string, selected: boolean) =>
-				selected ? `SEL<${text}>` : text,
-			value: (text: string) => text,
-			description: (text: string) => text,
-			cursor: "→ ",
-			hint: (text: string) => text,
-		};
-		let panel: { render: (w: number) => string[] } | undefined;
-		const { run } = await mountPanel({
-			deps: { settingsListTheme: () => marker },
-			simulate: (c) => {
-				panel = c;
-				c.handleInput("\x1b"); // Esc: close so the command completes
-			},
+			});
+			await run;
+			expect(readFileSync(join(testDir, "pi-chafa.json"), "utf8")).toBe(before);
+			expect(notifyMock).toHaveBeenCalledWith(
+				"pi-chafa: settings unchanged (cancelled)",
+				"info",
+			);
 		});
-		await run;
-		// The marker proves the injected theme reaches SettingsList's rows.
-		expect(panel?.render(80).join("\n")).toContain("SEL<");
-	});
-
-	it("stages edits: Esc discards and the file stays byte-identical (#045)", async () => {
-		writeFileSync(join(testDir, "pi-chafa.json"), JSON.stringify({ cellWidth: 71 }));
-		const before = readFileSync(join(testDir, "pi-chafa.json"), "utf8");
-		const { run, notifyMock } = await mountPanel({
-			simulate: (c) => {
-				c.handleInput("\r"); // cycle Prefer native → false
-				c.handleInput("\x1b"); // Esc: cancel
-			},
-		});
-		await run;
-		expect(readFileSync(join(testDir, "pi-chafa.json"), "utf8")).toBe(before);
-		expect(notifyMock).toHaveBeenCalledWith(
-			"pi-chafa: settings unchanged (cancelled)",
-			"info",
-		);
-	});
-
-	it("treats q as a reported cancel and leaves the file byte-identical (#048)", async () => {
-		writeFileSync(join(testDir, "pi-chafa.json"), JSON.stringify({ cellWidth: 71 }));
-		const before = readFileSync(join(testDir, "pi-chafa.json"), "utf8");
-		const { run, notifyMock } = await mountPanel({
-			simulate: (c) => {
-				c.handleInput("\r"); // cycle Prefer native → false: the draft is dirty
-				c.handleInput("q"); // must cancel AND report, never discard silently
-			},
-		});
-		await run;
-		expect(readFileSync(join(testDir, "pi-chafa.json"), "utf8")).toBe(before);
-		expect(notifyMock).toHaveBeenCalledWith(
-			"pi-chafa: settings unchanged (cancelled)",
-			"info",
-		);
-	});
 
 		it("makes q an exact Esc alias while the facts submenu is open (#062)", async () => {
-		// The wrapper intercepts q before the list sees it, so with a submenu open q
-		// discarded the whole draft while Esc closed only the submenu — contradicting
-		// #048's "q is an exact alias of Esc". The host exposes no accessor for an open
-		// submenu (`SettingsList.submenuComponent` is private), but the wrapper supplies
-		// the submenu's factory AND its close callback, so it can track that state.
-		let submenuRender: string[] = [];
-		let afterQ: string[] = [];
-		const { run, notifyMock } = await mountPanel({
-			simulate: (c, mount) => {
-				if (mount !== 1) return;
-				for (let i = 0; i < 8; i++) c.handleInput("\x1b[B"); // → Runtime status
-				c.handleInput("\r"); // open the facts submenu
-				submenuRender = c.render(80);
-				c.handleInput("q"); // q: the submenu's own branch closes it
-				afterQ = c.render(80);
-				c.handleInput("q"); // q again, no submenu: the panel cancels
-			},
-		});
-		await run;
+			// The wrapper intercepts q before the list sees it, so with a submenu open q
+			// discarded the whole draft while Esc closed only the submenu — contradicting
+			// #048's "q is an exact alias of Esc". The host exposes no accessor for an open
+			// submenu (`SettingsList.submenuComponent` is private), but the wrapper supplies
+			// the submenu's factory AND its close callback, so it can track that state.
+			let submenuRender: string[] = [];
+			let afterQ: string[] = [];
+			const { run, notifyMock } = await mountPanel({
+				simulate: (c, mount) => {
+					if (mount !== 1) return;
+					for (let i = 0; i < 8; i++) c.handleInput("\x1b[B"); // → Runtime status
+					c.handleInput("\r"); // open the facts submenu
+					submenuRender = c.render(80);
+					c.handleInput("q"); // q: the submenu's own branch closes it
+					afterQ = c.render(80);
+					c.handleInput("q"); // q again, no submenu: the panel cancels
+				},
+			});
+			await run;
 
-		// The submenu really was open: its lines replace the rows.
-		expect(submenuRender.join("\n")).toContain("Detected image protocol: ");
-		expect(submenuRender.join("\n")).not.toContain("Prefer native");
-		// q closed only the submenu — the panel is still there with its rows.
-		expect(afterQ.join("\n")).toContain("Prefer native");
-		// And the second q is the reported cancel (#048), never a silent discard.
-		expect(notifyMock).toHaveBeenCalledWith(
-			"pi-chafa: settings unchanged (cancelled)",
-			"info",
-		);
-	});
-
-it("Ctrl+S writes the draft exactly once and reports the count and file (#045)", async () => {
-		const realWrite = writeConfigFile;
-		const writeSpy = vi.fn((dir: string, cfg: unknown) => realWrite(dir, cfg as ChafaConfig));
-		const { run, notifyMock } = await mountPanel({
-			deps: { writeConfigFile: writeSpy },
-			simulate: (c) => {
-				c.handleInput("\r"); // Prefer native → false
-				c.handleInput("\x1b[B"); // down to Color mode
-				c.handleInput("\r"); // cycle colors
-				c.handleInput("\x13"); // Ctrl+S
-			},
+			// The submenu really was open: its lines replace the rows.
+			expect(submenuRender.join("\n")).toContain("Detected image protocol: ");
+			expect(submenuRender.join("\n")).not.toContain("Prefer native");
+			// q closed only the submenu — the panel is still there with its rows.
+			expect(afterQ.join("\n")).toContain("Prefer native");
+			// And the second q is the reported cancel (#048), never a silent discard.
+			expect(notifyMock).toHaveBeenCalledWith(
+				"pi-chafa: settings unchanged (cancelled)",
+				"info",
+			);
 		});
-		await run;
-		expect(writeSpy).toHaveBeenCalledTimes(1);
-		const saved = loadConfig(testDir);
-		expect(saved.preferNative).toBe(false);
-		expect(saved.colors).not.toBe("240");
-		expect(notifyMock).toHaveBeenCalledWith(
-			`pi-chafa: 2 settings saved to ${testDir}/pi-chafa.json`,
-			"info",
-		);
-	});
 
-	it("writes the file's own keys plus the changed one on Ctrl+S, not the resolved config (#058)", async () => {
-		writeFileSync(join(testDir, "pi-chafa.json"), JSON.stringify({ dither: "ordered" }));
-		const realWrite = writeConfigFile;
-		const writeSpy = vi.fn((dir: string, cfg: unknown) =>
-			realWrite(dir, cfg as ChafaConfig),
-		);
-		const { run } = await mountPanel({
-			deps: { writeConfigFile: writeSpy },
-			simulate: (c) => {
-				c.handleInput("\r"); // cycle Prefer native → false: the one changed key
-				c.handleInput("\x13"); // Ctrl+S
-			},
+		it("Ctrl+S writes the draft exactly once and reports the count and file (#045)", async () => {
+			const realWrite = writeConfigFile;
+			const writeSpy = vi.fn((dir: string, cfg: unknown) =>
+				realWrite(dir, cfg as ChafaConfig),
+			);
+			const { run, notifyMock } = await mountPanel({
+				deps: { writeConfigFile: writeSpy },
+				simulate: (c) => {
+					c.handleInput("\r"); // Prefer native → false
+					c.handleInput("\x1b[B"); // down to Color mode
+					c.handleInput("\r"); // cycle colors
+					c.handleInput("\x13"); // Ctrl+S
+				},
+			});
+			await run;
+			expect(writeSpy).toHaveBeenCalledTimes(1);
+			const saved = loadConfig(testDir);
+			expect(saved.preferNative).toBe(false);
+			expect(saved.colors).not.toBe("240");
+			expect(notifyMock).toHaveBeenCalledWith(
+				`pi-chafa: 2 settings saved to ${testDir}/pi-chafa.json`,
+				"info",
+			);
 		});
-		await run;
 
-		expect(
-			JSON.parse(readFileSync(join(testDir, "pi-chafa.json"), "utf8")),
-		).toStrictEqual({
-			version: DEFAULT_CONFIG.version,
-			dither: "ordered", // the file's own key, kept
-			preferNative: false, // the key this save changed
-		});
-	});
+		it("writes the file's own keys plus the changed one on Ctrl+S, not the resolved config (#058)", async () => {
+			writeFileSync(
+				join(testDir, "pi-chafa.json"),
+				JSON.stringify({ dither: "ordered" }),
+			);
+			const realWrite = writeConfigFile;
+			const writeSpy = vi.fn((dir: string, cfg: unknown) =>
+				realWrite(dir, cfg as ChafaConfig),
+			);
+			const { run } = await mountPanel({
+				deps: { writeConfigFile: writeSpy },
+				simulate: (c) => {
+					c.handleInput("\r"); // cycle Prefer native → false: the one changed key
+					c.handleInput("\x13"); // Ctrl+S
+				},
+			});
+			await run;
 
-	it("a clean Ctrl+S closes without writing (#045)", async () => {
-		const realWrite = writeConfigFile;
-		const writeSpy = vi.fn((dir: string, cfg: unknown) => realWrite(dir, cfg as ChafaConfig));
-		const { run, notifyMock } = await mountPanel({
-			deps: { writeConfigFile: writeSpy },
-			simulate: (c) => {
-				c.handleInput("\x13");
-			},
+			expect(
+				JSON.parse(readFileSync(join(testDir, "pi-chafa.json"), "utf8")),
+			).toStrictEqual({
+				version: DEFAULT_CONFIG.version,
+				dither: "ordered", // the file's own key, kept
+				preferNative: false, // the key this save changed
+			});
 		});
-		await run;
-		expect(writeSpy).not.toHaveBeenCalled();
-		expect(notifyMock).toHaveBeenCalledWith("pi-chafa: settings unchanged", "info");
-	});
 
-	it("advertises the save chord only while the draft differs (#045)", async () => {
-		let panel: { handleInput: (d: string) => void; render: (w: number) => string[] } | undefined;
-		const { run } = await mountPanel({
-			simulate: (c) => {
-				panel = c;
-			},
+		it("a clean Ctrl+S closes without writing (#045)", async () => {
+			const realWrite = writeConfigFile;
+			const writeSpy = vi.fn((dir: string, cfg: unknown) =>
+				realWrite(dir, cfg as ChafaConfig),
+			);
+			const { run, notifyMock } = await mountPanel({
+				deps: { writeConfigFile: writeSpy },
+				simulate: (c) => {
+					c.handleInput("\x13");
+				},
+			});
+			await run;
+			expect(writeSpy).not.toHaveBeenCalled();
+			expect(notifyMock).toHaveBeenCalledWith(
+				"pi-chafa: settings unchanged",
+				"info",
+			);
 		});
-		await vi.waitFor(() => {
-			expect(panel).toBeDefined();
-		});
-		const clean = panel?.render(80).join("\n") ?? "";
-		expect(clean).toContain(`${keyText("tui.select.cancel")}/q close`);
-		expect(clean).not.toContain("Ctrl+S");
-		panel?.handleInput("\r"); // dirty it
-		const dirty = panel?.render(80).join("\n") ?? "";
-		expect(dirty).toContain(
-			`unsaved changes — Ctrl+S saves and closes · ${keyText("tui.select.cancel")}/q discards`,
-		);
-		expect(dirty).not.toContain("/q close");
-		panel?.handleInput("\x1b"); // close so the command ends
-		await run;
-	});
 
-	it("saves only through Ctrl+S — Enter on a value row never writes (#054)", async () => {
-		const realWrite = writeConfigFile;
-		const writeSpy = vi.fn((dir: string, cfg: unknown) => realWrite(dir, cfg as ChafaConfig));
-		const { run, notifyMock } = await mountPanel({
-			deps: { writeConfigFile: writeSpy },
-			simulate: (c) => {
-				c.handleInput("\x1b[B"); // down to Color mode
-				c.handleInput("\r"); // cycle: the draft is dirty
-				c.handleInput("\r"); // Enter must keep cycling, never save
-				c.handleInput("\r");
-				expect(writeSpy).not.toHaveBeenCalled();
-				c.handleInput("\x13"); // Ctrl+S is the only confirm
-			},
+		it("advertises the save chord only while the draft differs (#045)", async () => {
+			let panel:
+				| { handleInput: (d: string) => void; render: (w: number) => string[] }
+				| undefined;
+			const { run } = await mountPanel({
+				simulate: (c) => {
+					panel = c;
+				},
+			});
+			await vi.waitFor(() => {
+				expect(panel).toBeDefined();
+			});
+			const clean = panel?.render(80).join("\n") ?? "";
+			expect(clean).toContain(`${keyText("tui.select.cancel")}/q close`);
+			expect(clean).not.toContain("Ctrl+S");
+			panel?.handleInput("\r"); // dirty it
+			const dirty = panel?.render(80).join("\n") ?? "";
+			expect(dirty).toContain(
+				`unsaved changes — Ctrl+S saves and closes · ${keyText("tui.select.cancel")}/q discards`,
+			);
+			expect(dirty).not.toContain("/q close");
+			panel?.handleInput("\x1b"); // close so the command ends
+			await run;
 		});
-		await run;
-		expect(writeSpy).toHaveBeenCalledTimes(1);
-		expect(loadConfig(testDir).colors).not.toBe("240");
-		expect(notifyMock).toHaveBeenCalledWith(
-			`pi-chafa: 1 setting saved to ${testDir}/pi-chafa.json`,
-			"info",
-		);
-	});
 
-	it("a failed write warns, keeps the draft, and leaves the panel open (#045)", async () => {
-		chmodSync(testDir, 0o555);
-		const { run, notifyMock, mounted } = await mountPanel({
-			simulate: (c) => {
-				c.handleInput("\r"); // dirty
-				c.handleInput("\x13"); // Ctrl+S → write fails
-			},
+		it("saves only through Ctrl+S — Enter on a value row never writes (#054)", async () => {
+			const realWrite = writeConfigFile;
+			const writeSpy = vi.fn((dir: string, cfg: unknown) =>
+				realWrite(dir, cfg as ChafaConfig),
+			);
+			const { run, notifyMock } = await mountPanel({
+				deps: { writeConfigFile: writeSpy },
+				simulate: (c) => {
+					c.handleInput("\x1b[B"); // down to Color mode
+					c.handleInput("\r"); // cycle: the draft is dirty
+					c.handleInput("\r"); // Enter must keep cycling, never save
+					c.handleInput("\r");
+					expect(writeSpy).not.toHaveBeenCalled();
+					c.handleInput("\x13"); // Ctrl+S is the only confirm
+				},
+			});
+			await run;
+			expect(writeSpy).toHaveBeenCalledTimes(1);
+			expect(loadConfig(testDir).colors).not.toBe("240");
+			expect(notifyMock).toHaveBeenCalledWith(
+				`pi-chafa: 1 setting saved to ${testDir}/pi-chafa.json`,
+				"info",
+			);
+		});
+
+		it("a failed write warns, keeps the draft, and leaves the panel open (#045)", async () => {
+			chmodSync(testDir, 0o555);
+			const { run, notifyMock, mounted } = await mountPanel({
+				simulate: (c) => {
+					c.handleInput("\r"); // dirty
+					c.handleInput("\x13"); // Ctrl+S → write fails
+				},
 			});
 			await vi.waitFor(() => {
 				expect(notifyMock).toHaveBeenCalledWith(
@@ -2202,115 +2216,123 @@ it("Ctrl+S writes the draft exactly once and reports the count and file (#045)",
 			await vi.waitFor(() => {
 				expect(mounted()).toBeDefined();
 			});
-		chmodSync(testDir, 0o755);
-		mounted()?.handleInput("\x13"); // retry succeeds
-		await run;
-		expect(loadConfig(testDir).preferNative).toBe(false);
-	});
-
-	it("stages 'e' custom-edit values: Esc after an 'e'-edit leaves the file byte-identical (#046)", async () => {
-		writeFileSync(join(testDir, "pi-chafa.json"), JSON.stringify({ cellWidth: 71 }));
-		const before = readFileSync(join(testDir, "pi-chafa.json"), "utf8");
-		const realWrite = writeConfigFile;
-		const writeSpy = vi.fn((dir: string, cfg: unknown) => realWrite(dir, cfg as ChafaConfig));
-		const { run, notifyMock } = await mountPanel({
-			deps: { writeConfigFile: writeSpy },
-			input: () => "moon+triangle",
-			select: () => "Symbols set",
-			simulate: (c, mount) => {
-				if (mount === 1) {
-					c.handleInput("e"); // picker → Symbols set → type the value
-				} else {
-					c.handleInput("\x1b"); // Esc discards
-				}
-			},
+			chmodSync(testDir, 0o755);
+			mounted()?.handleInput("\x13"); // retry succeeds
+			await run;
+			expect(loadConfig(testDir).preferNative).toBe(false);
 		});
-		await run;
-		expect(readFileSync(join(testDir, "pi-chafa.json"), "utf8")).toBe(before);
-		expect(writeSpy).not.toHaveBeenCalled();
-		expect(notifyMock).toHaveBeenCalledWith(
-			"pi-chafa: settings unchanged (cancelled)",
-			"info",
-		);
-	});
 
-	it("includes 'e' custom edits in the single Ctrl+S write and report (#046)", async () => {
-		const realWrite = writeConfigFile;
-		const writeSpy = vi.fn((dir: string, cfg: unknown) => realWrite(dir, cfg as ChafaConfig));
-		const { run, notifyMock } = await mountPanel({
-			deps: { writeConfigFile: writeSpy },
-			input: () => "moon+triangle",
-			select: () => "Symbols set",
-			simulate: (c, mount) => {
-				if (mount === 1) {
-					c.handleInput("e");
-				} else {
-					c.handleInput("\x13"); // Ctrl+S
-				}
-			},
+		it("stages 'e' custom-edit values: Esc after an 'e'-edit leaves the file byte-identical (#046)", async () => {
+			writeFileSync(
+				join(testDir, "pi-chafa.json"),
+				JSON.stringify({ cellWidth: 71 }),
+			);
+			const before = readFileSync(join(testDir, "pi-chafa.json"), "utf8");
+			const realWrite = writeConfigFile;
+			const writeSpy = vi.fn((dir: string, cfg: unknown) =>
+				realWrite(dir, cfg as ChafaConfig),
+			);
+			const { run, notifyMock } = await mountPanel({
+				deps: { writeConfigFile: writeSpy },
+				input: () => "moon+triangle",
+				select: () => "Symbols set",
+				simulate: (c, mount) => {
+					if (mount === 1) {
+						c.handleInput("e"); // picker → Symbols set → type the value
+					} else {
+						c.handleInput("\x1b"); // Esc discards
+					}
+				},
+			});
+			await run;
+			expect(readFileSync(join(testDir, "pi-chafa.json"), "utf8")).toBe(before);
+			expect(writeSpy).not.toHaveBeenCalled();
+			expect(notifyMock).toHaveBeenCalledWith(
+				"pi-chafa: settings unchanged (cancelled)",
+				"info",
+			);
 		});
-		await run;
-		expect(writeSpy).toHaveBeenCalledTimes(1);
-		expect(loadConfig(testDir).symbolsSet).toBe("moon+triangle");
-		expect(notifyMock).toHaveBeenCalledWith(
-			`pi-chafa: 1 setting saved to ${testDir}/pi-chafa.json`,
-			"info",
-		);
-	});
 
-	it("an invalid 'e' value warns, re-prompts, and never writes (#046)", async () => {
-		const realWrite = writeConfigFile;
-		const writeSpy = vi.fn((dir: string, cfg: unknown) => realWrite(dir, cfg as ChafaConfig));
-		const { run, notifyMock } = await mountPanel({
-			deps: { writeConfigFile: writeSpy },
-			input: () => "   ",
-			select: () => "Symbols set",
-			simulate: (c, mount) => {
-				if (mount === 1) {
-					c.handleInput("e");
-				} else {
-					c.handleInput("\x1b");
-				}
-			},
+		it("includes 'e' custom edits in the single Ctrl+S write and report (#046)", async () => {
+			const realWrite = writeConfigFile;
+			const writeSpy = vi.fn((dir: string, cfg: unknown) =>
+				realWrite(dir, cfg as ChafaConfig),
+			);
+			const { run, notifyMock } = await mountPanel({
+				deps: { writeConfigFile: writeSpy },
+				input: () => "moon+triangle",
+				select: () => "Symbols set",
+				simulate: (c, mount) => {
+					if (mount === 1) {
+						c.handleInput("e");
+					} else {
+						c.handleInput("\x13"); // Ctrl+S
+					}
+				},
+			});
+			await run;
+			expect(writeSpy).toHaveBeenCalledTimes(1);
+			expect(loadConfig(testDir).symbolsSet).toBe("moon+triangle");
+			expect(notifyMock).toHaveBeenCalledWith(
+				`pi-chafa: 1 setting saved to ${testDir}/pi-chafa.json`,
+				"info",
+			);
 		});
-		await run;
-		expect(writeSpy).not.toHaveBeenCalled();
-		expect(notifyMock).toHaveBeenCalledWith(
-			"pi-chafa: invalid symbolsSet (cannot be empty)",
-			"warning",
-		);
-	});
 
-	it("refuses a control-character 'e' value with the refusal copy and stages nothing (#060)", async () => {
-		// binaryPath used to be the silently-accepted case: its field has no
-		// validator copy at all, so the panel's `else if (field.invalid !== null)`
-		// stayed quiet and the escape bytes reached the file, which the next panel
-		// open renders back into the row's currentValue (invariant 3).
-		const realWrite = writeConfigFile;
-		const writeSpy = vi.fn((dir: string, cfg: unknown) =>
-			realWrite(dir, cfg as ChafaConfig),
-		);
-		const { run, notifyMock } = await mountPanel({
-			deps: { writeConfigFile: writeSpy },
-			input: () => "ascii\x1b[31m",
-			select: () => "Symbols set",
-			simulate: (c, mount) => {
-				if (mount === 1) {
-					c.handleInput("e"); // picker → Symbols set → the refused value
-				} else {
-					c.handleInput("\x13"); // Ctrl+S: would persist it if it had staged
-				}
-			},
+		it("an invalid 'e' value warns, re-prompts, and never writes (#046)", async () => {
+			const realWrite = writeConfigFile;
+			const writeSpy = vi.fn((dir: string, cfg: unknown) =>
+				realWrite(dir, cfg as ChafaConfig),
+			);
+			const { run, notifyMock } = await mountPanel({
+				deps: { writeConfigFile: writeSpy },
+				input: () => "   ",
+				select: () => "Symbols set",
+				simulate: (c, mount) => {
+					if (mount === 1) {
+						c.handleInput("e");
+					} else {
+						c.handleInput("\x1b");
+					}
+				},
+			});
+			await run;
+			expect(writeSpy).not.toHaveBeenCalled();
+			expect(notifyMock).toHaveBeenCalledWith(
+				"pi-chafa: invalid symbolsSet (cannot be empty)",
+				"warning",
+			);
 		});
-		await run;
-		expect(writeSpy).not.toHaveBeenCalled();
-		expect(notifyMock).toHaveBeenCalledWith(
-			`pi-chafa: ${controlCharReason("symbolsSet")}`,
-			"warning",
-		);
-	});
 
-});
+		it("refuses a control-character 'e' value with the refusal copy and stages nothing (#060)", async () => {
+			// binaryPath used to be the silently-accepted case: its field has no
+			// validator copy at all, so the panel's `else if (field.invalid !== null)`
+			// stayed quiet and the escape bytes reached the file, which the next panel
+			// open renders back into the row's currentValue (invariant 3).
+			const realWrite = writeConfigFile;
+			const writeSpy = vi.fn((dir: string, cfg: unknown) =>
+				realWrite(dir, cfg as ChafaConfig),
+			);
+			const { run, notifyMock } = await mountPanel({
+				deps: { writeConfigFile: writeSpy },
+				input: () => "ascii\x1b[31m",
+				select: () => "Symbols set",
+				simulate: (c, mount) => {
+					if (mount === 1) {
+						c.handleInput("e"); // picker → Symbols set → the refused value
+					} else {
+						c.handleInput("\x13"); // Ctrl+S: would persist it if it had staged
+					}
+				},
+			});
+			await run;
+			expect(writeSpy).not.toHaveBeenCalled();
+			expect(notifyMock).toHaveBeenCalledWith(
+				`pi-chafa: ${controlCharReason("symbolsSet")}`,
+				"warning",
+			);
+		});
+	});
 
 	it("offers an explicit close entry as the fallback's last option (#059)", async () => {
 		// #054 removed the synthetic Done row because the TUI panel has Ctrl+S; the
@@ -2322,7 +2344,10 @@ it("Ctrl+S writes the draft exactly once and reports the count and file (#045)",
 		const notifyMock = vi.fn();
 		const writer = vi.fn();
 		const closeEntry = `Close — ${SETTING_DESCRIPTIONS.done}`;
-		const selectMock = vi.fn().mockResolvedValueOnce(closeEntry).mockResolvedValue(undefined);
+		const selectMock = vi
+			.fn()
+			.mockResolvedValueOnce(closeEntry)
+			.mockResolvedValue(undefined);
 		const ctx = {
 			mode: "rpc",
 			hasUI: true,
@@ -2333,7 +2358,13 @@ it("Ctrl+S writes the draft exactly once and reports the count and file (#045)",
 			writeConfigFile: writer,
 		});
 
-		expect((selectMock.mock.calls[0]?.[1] as string[]).at(-1)).toBe(closeEntry);
+		// The optional chain must stay *outside* the cast: `as string[]` does not change
+		// the runtime value, so casting first would throw a TypeError instead of failing
+		// the assertion when the call never happened (lint/correctness rule).
+		const offeredOptions = selectMock.mock.calls[0]?.[1] as
+			| string[]
+			| undefined;
+		expect(offeredOptions?.at(-1)).toBe(closeEntry);
 		// One call: the entry itself exited the loop, rather than falling through to
 		// the next prompt (which would make it a row that does nothing).
 		expect(selectMock).toHaveBeenCalledTimes(1);
@@ -2349,7 +2380,9 @@ it("Ctrl+S writes the draft exactly once and reports the count and file (#045)",
 		);
 		const selectMock = vi
 			.fn()
-			.mockResolvedValueOnce(`Color mode: [240] — ${SETTING_DESCRIPTIONS.colors}`)
+			.mockResolvedValueOnce(
+				`Color mode: [240] — ${SETTING_DESCRIPTIONS.colors}`,
+			)
 			.mockResolvedValueOnce("8")
 			.mockResolvedValue(undefined);
 		const ctx = {
@@ -2369,9 +2402,9 @@ it("Ctrl+S writes the draft exactly once and reports the count and file (#045)",
 		const pi = { getAllTools: () => [] };
 		// The entry that exits the flow is the close one (#059); #039's point is that
 		// the flow is reached at all, rather than the command returning silently.
-		const selectMock = vi.fn().mockResolvedValueOnce(
-			`Close — ${SETTING_DESCRIPTIONS.done}`,
-		);
+		const selectMock = vi
+			.fn()
+			.mockResolvedValueOnce(`Close — ${SETTING_DESCRIPTIONS.done}`);
 		const customMock = vi.fn();
 		const notifyMock = vi.fn();
 		await runImagesCommand(pi as never, "", {
@@ -2497,5 +2530,3 @@ it("Ctrl+S writes the draft exactly once and reports the count and file (#045)",
 		}
 	});
 });
-
-

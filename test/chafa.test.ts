@@ -1,13 +1,13 @@
 import { describe, expect, it, vi } from "vitest";
-import { DEFAULT_CONFIG } from "../src/config.js";
 import {
-	MIN_CHAFA_VERSION,
 	buildSymbolsArgs,
 	cleanSymbolsPayload,
 	createCachedProbe,
+	MIN_CHAFA_VERSION,
 	probeChafa,
 	runChafa,
 } from "../src/chafa.js";
+import { DEFAULT_CONFIG } from "../src/config.js";
 import type { EffectiveSymbolsSettings } from "../src/types.js";
 
 const settings: EffectiveSymbolsSettings = {
@@ -41,7 +41,14 @@ describe("buildSymbolsArgs (spec §7.3 chat-safe invocation)", () => {
 		]);
 	});
 	it("reflects per-call settings in --size/--colors/--symbols/--dither", () => {
-		const custom: EffectiveSymbolsSettings = { ...settings, cellWidth: 80, maxRows: 20, colors: "16", symbolsSet: "block", dither: "ordered" };
+		const custom: EffectiveSymbolsSettings = {
+			...settings,
+			cellWidth: 80,
+			maxRows: 20,
+			colors: "16",
+			symbolsSet: "block",
+			dither: "ordered",
+		};
 		const args = buildSymbolsArgs("x.png", custom);
 		expect(args).toContain("80x20");
 		expect(args).toContain("16");
@@ -73,7 +80,10 @@ describe("cleanSymbolsPayload (spec §7.3 post-processing)", () => {
 
 describe("probeChafa", () => {
 	it("parses the version line and returns the binary", async () => {
-		const mockExec = vi.fn(async () => ({ stdout: "Chafa version 1.18.2\n", stderr: "" }));
+		const mockExec = vi.fn(async () => ({
+			stdout: "Chafa version 1.18.2\n",
+			stderr: "",
+		}));
 		const probe = await probeChafa(null, mockExec as never);
 		expect(probe.binary).toBe("chafa");
 		expect(probe.version).toEqual({ major: 1, minor: 18 });
@@ -84,11 +94,18 @@ describe("probeChafa", () => {
 			err.code = "ENOENT";
 			throw err;
 		});
-		await expect(probeChafa(null, mockExec as never)).rejects.toThrow(/not found/);
-		await expect(probeChafa(null, mockExec as never)).rejects.toThrow(/CHAFA_BIN/);
+		await expect(probeChafa(null, mockExec as never)).rejects.toThrow(
+			/not found/,
+		);
+		await expect(probeChafa(null, mockExec as never)).rejects.toThrow(
+			/CHAFA_BIN/,
+		);
 	});
 	it("throws when the binary is older than the minimum supported version", async () => {
-		const mockExec = vi.fn(async () => ({ stdout: "Chafa version 1.6.0\n", stderr: "" }));
+		const mockExec = vi.fn(async () => ({
+			stdout: "Chafa version 1.6.0\n",
+			stderr: "",
+		}));
 		await expect(probeChafa(null, mockExec as never)).rejects.toThrow(
 			new RegExp(`${MIN_CHAFA_VERSION.major}\\.${MIN_CHAFA_VERSION.minor}`),
 		);
@@ -105,7 +122,9 @@ describe("probeChafa", () => {
 	});
 	it("rethrows an abort from the version exec instead of wrapping it (#008)", async () => {
 		const mockExec = vi.fn(async () => {
-			const err = new Error("The operation was aborted") as Error & { code?: string };
+			const err = new Error("The operation was aborted") as Error & {
+				code?: string;
+			};
 			err.name = "AbortError";
 			err.code = "ABORT_ERR";
 			throw err;
@@ -142,19 +161,31 @@ describe("probeChafa", () => {
 			stdout: "Chafa version 1.18.2\nLoaders: avif Png\n",
 			stderr: "",
 		}));
-		expect((await probeChafa(null, mockExec as never)).loaders).toEqual(["AVIF", "PNG"]);
+		expect((await probeChafa(null, mockExec as never)).loaders).toEqual([
+			"AVIF",
+			"PNG",
+		]);
 	});
 	it("excludes '#'-disabled loaders rather than assuming they exist", async () => {
 		const mockExec = vi.fn(async () => ({
 			stdout: "Chafa version 1.18.2\nLoaders: AVIF #BMP PNG\n",
 			stderr: "",
 		}));
-		expect((await probeChafa(null, mockExec as never)).loaders).toEqual(["AVIF", "PNG"]);
+		expect((await probeChafa(null, mockExec as never)).loaders).toEqual([
+			"AVIF",
+			"PNG",
+		]);
 	});
 	it("reports loaders as null when the Loaders line is absent — never guesses (#015)", async () => {
-		const mockExec = vi.fn(async () => ({ stdout: "Chafa version 1.18.2\n", stderr: "" }));
+		const mockExec = vi.fn(async () => ({
+			stdout: "Chafa version 1.18.2\n",
+			stderr: "",
+		}));
 		expect((await probeChafa(null, mockExec as never)).loaders).toBe(null);
-		const empty = vi.fn(async () => ({ stdout: "Chafa version 1.18.2\nLoaders:\n", stderr: "" }));
+		const empty = vi.fn(async () => ({
+			stdout: "Chafa version 1.18.2\nLoaders:\n",
+			stderr: "",
+		}));
 		expect((await probeChafa(null, empty as never)).loaders).toBe(null);
 	});
 });
@@ -279,7 +310,9 @@ describe("createCachedProbe (#007, #008)", () => {
 				() => "resolved",
 				(e: unknown) => (e as Error).name,
 			),
-			new Promise<string>((resolve) => setTimeout(() => resolve("pending"), 50)),
+			new Promise<string>((resolve) =>
+				setTimeout(() => resolve("pending"), 50),
+			),
 		]);
 		expect(outcome).toBe("AbortError");
 		release?.();
@@ -291,44 +324,83 @@ describe("createCachedProbe (#007, #008)", () => {
 describe("runChafa", () => {
 	it("returns stdout on success", async () => {
 		const mockExec = vi.fn(async () => ({ stdout: "ART", stderr: "" }));
-		await expect(runChafa("/bin/chafa", ["--version"], { timeoutMs: 1000 }, mockExec as never)).resolves.toBe("ART");
+		await expect(
+			runChafa(
+				"/bin/chafa",
+				["--version"],
+				{ timeoutMs: 1000 },
+				mockExec as never,
+			),
+		).resolves.toBe("ART");
 	});
 	it("surfaces stderr on nonzero exit", async () => {
 		const mockExec = vi.fn(async () => {
-			const err = new Error("Command failed") as Error & { stderr?: string; code?: number };
+			const err = new Error("Command failed") as Error & {
+				stderr?: string;
+				code?: number;
+			};
 			err.code = 2;
 			err.stderr = "chafa: cannot open /nope.png";
 			throw err;
 		});
 		await expect(
-			runChafa("/bin/chafa", ["/nope.png"], { timeoutMs: 1000 }, mockExec as never),
+			runChafa(
+				"/bin/chafa",
+				["/nope.png"],
+				{ timeoutMs: 1000 },
+				mockExec as never,
+			),
 		).rejects.toThrow(/chafa: cannot open \/nope\.png/);
 	});
 	it("reports a timeout with a remedy hint", async () => {
 		const mockExec = vi.fn(async () => {
-			const err = new Error("Command failed") as NodeJS.ErrnoException & { killed?: boolean };
+			const err = new Error("Command failed") as NodeJS.ErrnoException & {
+				killed?: boolean;
+			};
 			err.killed = true;
 			throw err;
 		});
 		await expect(
-			runChafa("/bin/chafa", ["big.png"], { timeoutMs: 250 }, mockExec as never),
+			runChafa(
+				"/bin/chafa",
+				["big.png"],
+				{ timeoutMs: 250 },
+				mockExec as never,
+			),
 		).rejects.toThrow(/timed out after 250ms/);
 		await expect(
-			runChafa("/bin/chafa", ["big.png"], { timeoutMs: 250 }, mockExec as never),
+			runChafa(
+				"/bin/chafa",
+				["big.png"],
+				{ timeoutMs: 250 },
+				mockExec as never,
+			),
 		).rejects.toThrow(/cellWidth/);
 	});
 	it("rethrows a user abort distinctly (not as a timeout)", async () => {
 		const mockExec = vi.fn(async () => {
-			const err = new Error("The operation was aborted") as Error & { code?: string };
+			const err = new Error("The operation was aborted") as Error & {
+				code?: string;
+			};
 			err.name = "AbortError";
 			err.code = "ABORT_ERR";
 			throw err;
 		});
 		await expect(
-			runChafa("/bin/chafa", ["big.png"], { timeoutMs: 250 }, mockExec as never),
+			runChafa(
+				"/bin/chafa",
+				["big.png"],
+				{ timeoutMs: 250 },
+				mockExec as never,
+			),
 		).rejects.toThrow("The operation was aborted");
 		await expect(
-			runChafa("/bin/chafa", ["big.png"], { timeoutMs: 250 }, mockExec as never),
+			runChafa(
+				"/bin/chafa",
+				["big.png"],
+				{ timeoutMs: 250 },
+				mockExec as never,
+			),
 		).rejects.not.toThrow(/timed out/);
 	});
 });

@@ -1,5 +1,5 @@
-import { describe, expect, it, vi } from "vitest";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { describe, expect, it, vi } from "vitest";
 import { SETTING_KEYS } from "../src/commands/images.js";
 import piChafaExtension from "../src/index.js";
 import { COLOR_MODES } from "../src/types.js";
@@ -23,7 +23,10 @@ describe("piChafaExtension registration", () => {
 	});
 
 	it("completes the argument grammar the command accepts (#041, #050)", async () => {
-		const commands = new Map<string, { getArgumentCompletions?: (p: string) => unknown }>();
+		const commands = new Map<
+			string,
+			{ getArgumentCompletions?: (p: string) => unknown }
+		>();
 		const pi = {
 			registerTool: vi.fn(),
 			registerCommand: (
@@ -54,7 +57,9 @@ describe("piChafaExtension registration", () => {
 		expect(first.every((c) => (c.description ?? "").length > 0)).toBe(true);
 		// Descriptions are the command-line copy, not the panel's: they must not tell a
 		// command-line user to press Enter/Space or 'e'.
-		expect(completions("cellWidth")[0]?.description).toBe("Width in terminal columns");
+		expect(completions("cellWidth")[0]?.description).toBe(
+			"Width in terminal columns",
+		);
 		expect(
 			first.every((c) => !/Enter\/Space|Press 'e'/.test(c.description ?? "")),
 		).toBe(true);
@@ -70,7 +75,9 @@ describe("piChafaExtension registration", () => {
 		expect(completions("colors ").map((c) => c.value)).toEqual(
 			COLOR_MODES.map((value) => `colors ${value}`),
 		);
-		expect(completions("dither or").map((c) => c.value)).toEqual(["dither ordered"]);
+		expect(completions("dither or").map((c) => c.value)).toEqual([
+			"dither ordered",
+		]);
 		expect(completions("symbolsSet br").map((c) => c.value)).toEqual([
 			"symbolsSet braille",
 		]);

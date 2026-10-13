@@ -1,7 +1,13 @@
 {
-  "$schema": "https://biomejs.dev/schemas/2.3.5/schema.json",
-  "files": { "includes": ["src/**/*.ts"] },
-  "formatter": { "enabled": true, "indentStyle": "tab" },
-  "linter": { "enabled": true },
-  "javascript": { "formatter": { "quoteStyle": "double", "semicolons": "always" } }
+	"$schema": "https://biomejs.dev/schemas/2.5.12/schema.json",
+	"files": { "includes": ["src/**/*.ts", "test/**/*.ts"] },
+	"formatter": { "enabled": true, "indentStyle": "tab" },
+	"linter": { "enabled": true },
+	"javascript": { "formatter": { "quoteStyle": "double", "semicolons": "always" } },
+	"overrides": [
+		{
+			"includes": ["test/**/*.ts"],
+			"linter": { "rules": { "style": { "noNonNullAssertion": "off" } } }
+		}
+	]
 }

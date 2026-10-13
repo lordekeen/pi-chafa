@@ -715,8 +715,11 @@ export function resolveSettingKey(raw: string): SettingKey | undefined {
 	return SETTING_KEYS.find((key) => key.toLowerCase() === lower);
 }
 
-/** Result of one `/images <key> <value>` attempt (#050). */
-export type SettingArgResult =
+/**
+ * Result of one `/images <key> <value>` attempt (#050). Private since #064: nothing
+ * outside this module consumes it — the handler narrows on `.ok`.
+ */
+type SettingArgResult =
 	| { ok: true; next: ChafaConfig }
 	| { ok: false; reason: string };
 

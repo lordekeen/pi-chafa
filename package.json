@@ -43,8 +43,8 @@
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc --noEmit",
-    "lint": "biome check src/",
-    "lint:fix": "biome check --fix src/",
+    "lint": "biome check src/ test/",
+    "lint:fix": "biome check --fix src/ test/",
     "test": "vitest run --passWithNoTests",
     "test:watch": "vitest --passWithNoTests",
     "test:smoke": "npm run build && node scripts/smoke.mjs",

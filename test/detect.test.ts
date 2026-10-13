@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
+	type DeliveryInput,
 	decideDelivery,
 	decideFileDelivery,
-	type DeliveryInput,
 	isTmux,
 	knownNoImageSupport,
 	missingLoaderMessage,
@@ -41,21 +41,33 @@ describe("decideDelivery — spec §7.2 decision table", () => {
 		expect(decideDelivery(input({ capsImages: "iterm2" }))).toBe("native");
 	});
 	it("native-capable + preferNative=false -> symbols", () => {
-		expect(decideDelivery(input({ capsImages: "kitty", preferNative: false }))).toBe("symbols");
+		expect(
+			decideDelivery(input({ capsImages: "kitty", preferNative: false })),
+		).toBe("symbols");
 	});
 	it("native-capable + format=symbols -> symbols", () => {
-		expect(decideDelivery(input({ capsImages: "kitty", format: "symbols" }))).toBe("symbols");
+		expect(
+			decideDelivery(input({ capsImages: "kitty", format: "symbols" })),
+		).toBe("symbols");
 	});
 	it("native-capable + showImages=false -> symbols (host would suppress blocks)", () => {
-		expect(decideDelivery(input({ capsImages: "kitty", showImages: false }))).toBe("symbols");
+		expect(
+			decideDelivery(input({ capsImages: "kitty", showImages: false })),
+		).toBe("symbols");
 	});
 	it("null caps -> symbols regardless of preferNative", () => {
 		expect(decideDelivery(input({ capsImages: null }))).toBe("symbols");
-		expect(decideDelivery(input({ capsImages: null, format: "symbols" }))).toBe("symbols");
+		expect(decideDelivery(input({ capsImages: null, format: "symbols" }))).toBe(
+			"symbols",
+		);
 	});
 	it("format=native forced on null caps -> informative error, not silent degrade", () => {
-		expect(() => decideDelivery(input({ capsImages: null, format: "native" }))).toThrow(/format=native/);
-		expect(() => decideDelivery(input({ capsImages: null, format: "native" }))).toThrow(/PI_IMAGE_PROTOCOL/);
+		expect(() =>
+			decideDelivery(input({ capsImages: null, format: "native" })),
+		).toThrow(/format=native/);
+		expect(() =>
+			decideDelivery(input({ capsImages: null, format: "native" })),
+		).toThrow(/PI_IMAGE_PROTOCOL/);
 	});
 	it("forced-native error is worded for tmux: PI_IMAGE_PROTOCOL opt-in, not the ignored setting (#030)", () => {
 		const message = messageOf({
@@ -111,7 +123,9 @@ describe("decideDelivery — spec §7.2 decision table", () => {
 		).toBe("symbols");
 	});
 	it("format=auto on native-capable preferNative=true -> native", () => {
-		expect(decideDelivery(input({ capsImages: "iterm2", format: "auto" }))).toBe("native");
+		expect(
+			decideDelivery(input({ capsImages: "iterm2", format: "auto" })),
+		).toBe("native");
 	});
 });
 
@@ -188,15 +202,47 @@ describe("knownNoImageSupport / isTmux — #026 environment guard", () => {
 			env: Record<string, string>;
 			platform: string;
 		}> = [
-			{ label: "TERM_PROGRAM=alacritty", env: { TERM_PROGRAM: "alacritty" }, platform: "linux" },
-			{ label: "ALACRITTY_LOG", env: { ALACRITTY_LOG: "/tmp/alacritty.log" }, platform: "linux" },
-			{ label: "ALACRITTY_WINDOW_ID", env: { ALACRITTY_WINDOW_ID: "1" }, platform: "linux" },
-			{ label: "ALACRITTY_SOCKET", env: { ALACRITTY_SOCKET: "/run/alacritty" }, platform: "linux" },
-			{ label: "TERM_PROGRAM=vscode", env: { TERM_PROGRAM: "vscode" }, platform: "linux" },
-			{ label: "TERM_PROGRAM=zed", env: { TERM_PROGRAM: "zed" }, platform: "linux" },
-			{ label: "jetbrains-jediterm", env: { TERMINAL_EMULATOR: "jetbrains-jediterm" }, platform: "linux" },
+			{
+				label: "TERM_PROGRAM=alacritty",
+				env: { TERM_PROGRAM: "alacritty" },
+				platform: "linux",
+			},
+			{
+				label: "ALACRITTY_LOG",
+				env: { ALACRITTY_LOG: "/tmp/alacritty.log" },
+				platform: "linux",
+			},
+			{
+				label: "ALACRITTY_WINDOW_ID",
+				env: { ALACRITTY_WINDOW_ID: "1" },
+				platform: "linux",
+			},
+			{
+				label: "ALACRITTY_SOCKET",
+				env: { ALACRITTY_SOCKET: "/run/alacritty" },
+				platform: "linux",
+			},
+			{
+				label: "TERM_PROGRAM=vscode",
+				env: { TERM_PROGRAM: "vscode" },
+				platform: "linux",
+			},
+			{
+				label: "TERM_PROGRAM=zed",
+				env: { TERM_PROGRAM: "zed" },
+				platform: "linux",
+			},
+			{
+				label: "jetbrains-jediterm",
+				env: { TERMINAL_EMULATOR: "jetbrains-jediterm" },
+				platform: "linux",
+			},
 			{ label: "WT_SESSION", env: { WT_SESSION: "abc" }, platform: "linux" },
-			{ label: "TERM=screen", env: { TERM: "screen-256color" }, platform: "linux" },
+			{
+				label: "TERM=screen",
+				env: { TERM: "screen-256color" },
+				platform: "linux",
+			},
 			{ label: "win32 platform", env: {}, platform: "win32" },
 		];
 		for (const { label, env, platform } of cases) {
@@ -204,17 +250,46 @@ describe("knownNoImageSupport / isTmux — #026 environment guard", () => {
 		}
 	});
 	it("does not deny genuine protocol markers (pi-tui checks positives first)", () => {
-		expect(knownNoImageSupport({ TERM_PROGRAM: "wezterm", WT_SESSION: "x" }, "win32")).toBe(false);
-		expect(knownNoImageSupport({ KITTY_WINDOW_ID: "1", ALACRITTY_LOG: "/tmp/a" }, "linux")).toBe(false);
-		expect(knownNoImageSupport({ GHOSTTY_RESOURCES_DIR: "/x", TERM_PROGRAM: "vscode" }, "linux")).toBe(false);
-		expect(knownNoImageSupport({ ITERM_SESSION_ID: "w0t0p0" }, "linux")).toBe(false);
+		expect(
+			knownNoImageSupport(
+				{ TERM_PROGRAM: "wezterm", WT_SESSION: "x" },
+				"win32",
+			),
+		).toBe(false);
+		expect(
+			knownNoImageSupport(
+				{ KITTY_WINDOW_ID: "1", ALACRITTY_LOG: "/tmp/a" },
+				"linux",
+			),
+		).toBe(false);
+		expect(
+			knownNoImageSupport(
+				{ GHOSTTY_RESOURCES_DIR: "/x", TERM_PROGRAM: "vscode" },
+				"linux",
+			),
+		).toBe(false);
+		expect(knownNoImageSupport({ ITERM_SESSION_ID: "w0t0p0" }, "linux")).toBe(
+			false,
+		);
 	});
 	it("denies screen before the positive markers, matching pi-tui's order", () => {
-		expect(knownNoImageSupport({ TERM: "screen-256color", TERM_PROGRAM: "kitty" }, "linux")).toBe(true);
+		expect(
+			knownNoImageSupport(
+				{ TERM: "screen-256color", TERM_PROGRAM: "kitty" },
+				"linux",
+			),
+		).toBe(true);
 	});
 	it("leaves unknown terminals alone so declarations stay the escape hatch", () => {
-		expect(knownNoImageSupport({ TERM: "xterm-konsole", TERM_PROGRAM: "konsole" }, "linux")).toBe(false);
-		expect(knownNoImageSupport({ TERM: "xterm-256color" }, "linux")).toBe(false);
+		expect(
+			knownNoImageSupport(
+				{ TERM: "xterm-konsole", TERM_PROGRAM: "konsole" },
+				"linux",
+			),
+		).toBe(false);
+		expect(knownNoImageSupport({ TERM: "xterm-256color" }, "linux")).toBe(
+			false,
+		);
 	});
 	it("classifies tmux", () => {
 		expect(isTmux({ TMUX: "/tmp/tmux-1000/default,1,0" })).toBe(true);
@@ -228,29 +303,53 @@ describe("resolveCapsImages — #026 guard integration", () => {
 	const TMUX = { TMUX: "/tmp/tmux-1000/default,1,0" };
 	it("hard-denied terminals cannot be declared native by any source", () => {
 		const env = { TERM_PROGRAM: "alacritty" };
-		expect(resolveCapsImages("kitty", "kitty", "kitty", env, "linux")).toBe(null);
+		expect(resolveCapsImages("kitty", "kitty", "kitty", env, "linux")).toBe(
+			null,
+		);
 		expect(resolveCapsImages(null, "kitty", "kitty", env, "linux")).toBe(null);
 		expect(resolveCapsImages(null, null, "kitty", env, "linux")).toBe(null);
 	});
 	it("tmux ignores ambient declarations but honors PI_IMAGE_PROTOCOL", () => {
-		expect(resolveCapsImages("kitty", "kitty", undefined, TMUX, "linux")).toBe(null);
-		expect(resolveCapsImages(null, "kitty", undefined, TMUX, "linux")).toBe(null);
-		expect(resolveCapsImages(null, "kitty", "kitty", TMUX, "linux")).toBe("kitty");
-		expect(resolveCapsImages("iterm2", "kitty", "iterm2", TMUX, "linux")).toBe("iterm2");
+		expect(resolveCapsImages("kitty", "kitty", undefined, TMUX, "linux")).toBe(
+			null,
+		);
+		expect(resolveCapsImages(null, "kitty", undefined, TMUX, "linux")).toBe(
+			null,
+		);
+		expect(resolveCapsImages(null, "kitty", "kitty", TMUX, "linux")).toBe(
+			"kitty",
+		);
+		expect(resolveCapsImages("iterm2", "kitty", "iterm2", TMUX, "linux")).toBe(
+			"iterm2",
+		);
 	});
 	it("keeps the declaration on unknown terminals (e.g. Konsole)", () => {
 		expect(
-			resolveCapsImages(null, "kitty", undefined, { TERM: "xterm-konsole" }, "linux"),
+			resolveCapsImages(
+				null,
+				"kitty",
+				undefined,
+				{ TERM: "xterm-konsole" },
+				"linux",
+			),
 		).toBe("kitty");
 	});
 	it("win32 denies declarations but genuine protocol markers still win", () => {
 		expect(resolveCapsImages(null, "kitty", "kitty", {}, "win32")).toBe(null);
 		expect(
-			resolveCapsImages(null, "kitty", undefined, { TERM_PROGRAM: "wezterm" }, "win32"),
+			resolveCapsImages(
+				null,
+				"kitty",
+				undefined,
+				{ TERM_PROGRAM: "wezterm" },
+				"win32",
+			),
 		).toBe("kitty");
 	});
 	it("empty env/platform keeps the pre-#026 ladder exactly", () => {
-		expect(resolveCapsImages("kitty", "iterm2", "iterm2", {}, "")).toBe("kitty");
+		expect(resolveCapsImages("kitty", "iterm2", "iterm2", {}, "")).toBe(
+			"kitty",
+		);
 		expect(resolveCapsImages(null, "kitty", undefined, {}, "")).toBe("kitty");
 	});
 });
@@ -262,17 +361,34 @@ describe("decideFileDelivery — native-safe mime rule (#014/#015)", () => {
 		{ mime: "image/bmp", loader: "BMP", label: "BMP" },
 		{ mime: "image/x-icon", loader: "ICO", label: "ICO" },
 	] as const;
-	const ALL_LOADERS = ["AVIF", "BMP", "GIF", "ICO", "JPEG", "PNG", "SVG", "WEBP"];
+	const ALL_LOADERS = [
+		"AVIF",
+		"BMP",
+		"GIF",
+		"ICO",
+		"JPEG",
+		"PNG",
+		"SVG",
+		"WEBP",
+	];
 
 	it("returns native for every native-safe mime in a native session", () => {
 		for (const mime of NATIVE_SAFE_MIMES) {
 			expect(
-				decideFileDelivery({ mime, mode: "native", format: "auto", chafaLoaders: null })
-					.delivery,
+				decideFileDelivery({
+					mime,
+					mode: "native",
+					format: "auto",
+					chafaLoaders: null,
+				}).delivery,
 			).toBe("native");
 			expect(
-				decideFileDelivery({ mime, mode: "native", format: "native", chafaLoaders: [] })
-					.delivery,
+				decideFileDelivery({
+					mime,
+					mode: "native",
+					format: "native",
+					chafaLoaders: [],
+				}).delivery,
 			).toBe("native");
 		}
 	});
@@ -343,8 +459,12 @@ describe("decideFileDelivery — native-safe mime rule (#014/#015)", () => {
 	it("attempts when the loader list is unknown (null), never guessing they are missing", () => {
 		for (const { mime } of UNSAFE_KNOWN) {
 			expect(
-				decideFileDelivery({ mime, mode: "symbols", format: "auto", chafaLoaders: null })
-					.delivery,
+				decideFileDelivery({
+					mime,
+					mode: "symbols",
+					format: "auto",
+					chafaLoaders: null,
+				}).delivery,
 			).toBe("symbols");
 		}
 	});
@@ -357,7 +477,9 @@ describe("decideFileDelivery — native-safe mime rule (#014/#015)", () => {
 		});
 		expect(plan.delivery).toBe("error");
 		expect(plan.error).toMatch(/not a recognized image format/);
-		expect(plan.error).toBe(unrecognizedMimeMessage("application/octet-stream"));
+		expect(plan.error).toBe(
+			unrecognizedMimeMessage("application/octet-stream"),
+		);
 	});
 	it("still attempts an unrecognized mime on the symbols path (chafa is format-flexible)", () => {
 		expect(
@@ -380,7 +502,12 @@ describe("decideFileDelivery — native-safe mime rule (#014/#015)", () => {
 			for (const mode of ["native", "symbols"] as const) {
 				for (const format of ["auto", "native", "symbols"] as const) {
 					for (const chafaLoaders of [null, ALL_LOADERS, ["PNG"]]) {
-						const plan = decideFileDelivery({ mime, mode, format, chafaLoaders });
+						const plan = decideFileDelivery({
+							mime,
+							mode,
+							format,
+							chafaLoaders,
+						});
 						if (plan.delivery === "native") {
 							expect(NATIVE_SAFE_MIMES).toContain(mime);
 						}

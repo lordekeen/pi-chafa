@@ -2,6 +2,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
 // #044: count real production reads at the config-module boundary — the only
 // place the three pre-fix reads (resolveConfig default arg, capsImages closure,
 // showImages) are observable, since the tool's injectable seams bypass them.
@@ -22,11 +23,11 @@ vi.mock("../src/config.js", async (importOriginal) => {
 
 import { cleanSymbolsPayload } from "../src/chafa.js";
 import { DEFAULT_CONFIG } from "../src/config.js";
-import { NATIVE_SAFE_MIMES, type ImageEnv } from "../src/detect.js";
+import { type ImageEnv, NATIVE_SAFE_MIMES } from "../src/detect.js";
 import {
 	buildShowImageTool,
-	summaryText,
 	type ShowImageDeps,
+	summaryText,
 } from "../src/show-image.js";
 import type {
 	AgentCapsImages,
@@ -36,7 +37,6 @@ import type {
 	ShowImageDetails,
 	ShowImageFile,
 } from "../src/types.js";
-
 
 // A real, valid 1x1 PNG (red pixel).
 const PNG_BASE64 =
@@ -73,31 +73,34 @@ function resolvedConfig(overrides: ChafaOverrides = {}): ResolvedConfig {
 	};
 }
 
-function makeTool(overrides: {
-	capsImages?: AgentCapsImages;
-	hostImages?: AgentCapsImages;
-	envProtocol?: string;
-	showImages?: boolean;
-	format?: "auto" | "native" | "symbols";
-	hasUI?: boolean;
-	columns?: number;
-	runStdout?: string;
-	probeChafa?: ShowImageDeps["probeChafa"];
-	runChafa?: ShowImageDeps["runChafa"];
-	sniffMime?: ShowImageDeps["sniffMime"];
-	readBytes?: ShowImageDeps["readBytes"];
-	readHead?: ShowImageDeps["readHead"];
-	fileSize?: ShowImageDeps["fileSize"];
-	expandTargets?: ShowImageDeps["expandTargets"];
-	/** Injected environment/platform for the #026 guard + #030 hint (#031 seam). */
-	env?: ImageEnv;
-	platform?: string;
-} = {}) {
+function makeTool(
+	overrides: {
+		capsImages?: AgentCapsImages;
+		hostImages?: AgentCapsImages;
+		envProtocol?: string;
+		showImages?: boolean;
+		format?: "auto" | "native" | "symbols";
+		hasUI?: boolean;
+		columns?: number;
+		runStdout?: string;
+		probeChafa?: ShowImageDeps["probeChafa"];
+		runChafa?: ShowImageDeps["runChafa"];
+		sniffMime?: ShowImageDeps["sniffMime"];
+		readBytes?: ShowImageDeps["readBytes"];
+		readHead?: ShowImageDeps["readHead"];
+		fileSize?: ShowImageDeps["fileSize"];
+		expandTargets?: ShowImageDeps["expandTargets"];
+		/** Injected environment/platform for the #026 guard + #030 hint (#031 seam). */
+		env?: ImageEnv;
+		platform?: string;
+	} = {},
+) {
 	// #044: execute() reads host settings once via readHostImages and computes
 	// the ladder from it — the old standalone capsImages seam is gone. The old
 	// `capsImages` param now feeds the injected host value (default "kitty" =
 	// capable host, matching the pre-#044 default); an explicit hostImages wins.
-	const capsImages = overrides.capsImages === undefined ? "kitty" : overrides.capsImages;
+	const capsImages =
+		overrides.capsImages === undefined ? "kitty" : overrides.capsImages;
 	const hostImages = overrides.hostImages ?? capsImages;
 	const showImages = overrides.showImages ?? true;
 	const hasUI = overrides.hasUI ?? true;
@@ -133,8 +136,7 @@ function makeTool(overrides: {
 				return Buffer.from(PNG_BASE64, "base64");
 			}),
 		readHead:
-			overrides.readHead ??
-			(async () => Buffer.from(PNG_BASE64, "base64")),
+			overrides.readHead ?? (async () => Buffer.from(PNG_BASE64, "base64")),
 		fileSize:
 			overrides.fileSize ??
 			(() => Buffer.from(PNG_BASE64, "base64").byteLength),
@@ -148,7 +150,8 @@ function makeTool(overrides: {
 				version: { major: 1, minor: 18 },
 				loaders: null,
 			})),
-		runChafa: overrides.runChafa ?? (async () => overrides.runStdout ?? RAW_ART),
+		runChafa:
+			overrides.runChafa ?? (async () => overrides.runStdout ?? RAW_ART),
 		// Real cleaner: RAW_ART (cursor toggles wrapped) must become CLEAN_ART.
 		cleanPayload: cleanSymbolsPayload,
 		// Ambient env/platform reach the tool only through the injected seam, so
@@ -172,24 +175,45 @@ const neverAbort = () => undefined as AbortSignal | undefined;
 
 describe("summaryText (locked wording, open question 5)", () => {
 	it("single native file", () => {
-		const files: ShowImageFile[] = [{ path: pngPath, ok: true, mode: "native", mimeType: "image/png", byteSize: 100 }];
-		expect(summaryText(files, "native")).toBe("Showed image pic.png to the user via terminal-native rendering.");
+		const files: ShowImageFile[] = [
+			{
+				path: pngPath,
+				ok: true,
+				mode: "native",
+				mimeType: "image/png",
+				byteSize: 100,
+			},
+		];
+		expect(summaryText(files, "native")).toBe(
+			"Showed image pic.png to the user via terminal-native rendering.",
+		);
 	});
 	it("single symbols file", () => {
-		const files: ShowImageFile[] = [{ path: pngPath, ok: true, mode: "symbols" }];
-		expect(summaryText(files, "symbols")).toBe("Showed image pic.png to the user as ANSI art.");
+		const files: ShowImageFile[] = [
+			{ path: pngPath, ok: true, mode: "symbols" },
+		];
+		expect(summaryText(files, "symbols")).toBe(
+			"Showed image pic.png to the user as ANSI art.",
+		);
 	});
 	it("many files includes the count", () => {
 		const files: ShowImageFile[] = [
 			{ path: join(dir, "1.png"), ok: true, mode: "symbols" },
 			{ path: join(dir, "2.png"), ok: true, mode: "symbols" },
 		];
-		expect(summaryText(files, "symbols")).toBe("Showed 2 image(s) to the user as ANSI art.");
+		expect(summaryText(files, "symbols")).toBe(
+			"Showed 2 image(s) to the user as ANSI art.",
+		);
 	});
 	it("mixed success reports the shown-of-total count so the header never contradicts the tail (#006)", () => {
 		const files: ShowImageFile[] = [
 			{ path: join(dir, "1.png"), ok: true, mode: "symbols" },
-			{ path: join(dir, "2.png"), ok: false, mode: "symbols", note: "failed to read" },
+			{
+				path: join(dir, "2.png"),
+				ok: false,
+				mode: "symbols",
+				note: "failed to read",
+			},
 		];
 		expect(summaryText(files, "symbols")).toBe(
 			"Showed 1 of 2 image(s) to the user as ANSI art. 1 file(s) could not be shown.",
@@ -200,13 +224,30 @@ describe("summaryText (locked wording, open question 5)", () => {
 			{ path: join(dir, "1.png"), ok: true, mode: "symbols" },
 			{ path: join(dir, "2.png"), ok: true, mode: "symbols" },
 		];
-		expect(summaryText(files, "symbols")).toBe("Showed 2 image(s) to the user as ANSI art.");
+		expect(summaryText(files, "symbols")).toBe(
+			"Showed 2 image(s) to the user as ANSI art.",
+		);
 	});
 	it("keeps the Note clause on a mixed-success run (#006)", () => {
 		const files: ShowImageFile[] = [
-			{ path: join(dir, "1.png"), ok: true, mode: "symbols", note: "chafa produced no output" },
-			{ path: join(dir, "2.png"), ok: false, mode: "symbols", note: "failed to read" },
-			{ path: join(dir, "3.png"), ok: false, mode: "symbols", note: "failed to read" },
+			{
+				path: join(dir, "1.png"),
+				ok: true,
+				mode: "symbols",
+				note: "chafa produced no output",
+			},
+			{
+				path: join(dir, "2.png"),
+				ok: false,
+				mode: "symbols",
+				note: "failed to read",
+			},
+			{
+				path: join(dir, "3.png"),
+				ok: false,
+				mode: "symbols",
+				note: "failed to read",
+			},
 		];
 		expect(summaryText(files, "symbols")).toBe(
 			"Showed 1 of 3 image(s) to the user as ANSI art. 2 file(s) could not be shown. Note: chafa produced no output.",
@@ -222,8 +263,18 @@ describe("summaryText (locked wording, open question 5)", () => {
 	});
 	it("appends a de-duplicated Note clause when shown files carry notes", () => {
 		const files: ShowImageFile[] = [
-			{ path: join(dir, "1.png"), ok: true, mode: "native", note: "unknown image format" },
-			{ path: join(dir, "2.png"), ok: true, mode: "native", note: "unknown image format" },
+			{
+				path: join(dir, "1.png"),
+				ok: true,
+				mode: "native",
+				note: "unknown image format",
+			},
+			{
+				path: join(dir, "2.png"),
+				ok: true,
+				mode: "native",
+				note: "unknown image format",
+			},
 			{ path: join(dir, "3.png"), ok: true, mode: "native" },
 		];
 		expect(summaryText(files, "native")).toBe(
@@ -232,8 +283,18 @@ describe("summaryText (locked wording, open question 5)", () => {
 	});
 	it("mixed native+symbols run names both deliveries, not the session mode (#024)", () => {
 		const files: ShowImageFile[] = [
-			{ path: join(dir, "1.png"), ok: true, mode: "native", mimeType: "image/png" },
-			{ path: join(dir, "2.png"), ok: true, mode: "native", mimeType: "image/png" },
+			{
+				path: join(dir, "1.png"),
+				ok: true,
+				mode: "native",
+				mimeType: "image/png",
+			},
+			{
+				path: join(dir, "2.png"),
+				ok: true,
+				mode: "native",
+				mimeType: "image/png",
+			},
 			{
 				path: join(dir, "3.svg"),
 				ok: true,
@@ -260,7 +321,12 @@ describe("summaryText (locked wording, open question 5)", () => {
 		const files: ShowImageFile[] = [
 			{ path: join(dir, "1.png"), ok: true, mode: "native" },
 			{ path: join(dir, "2.svg"), ok: true, mode: "symbols" },
-			{ path: join(dir, "3.svg"), ok: false, mode: "native", note: "failed to read" },
+			{
+				path: join(dir, "3.svg"),
+				ok: false,
+				mode: "native",
+				note: "failed to read",
+			},
 		];
 		expect(summaryText(files, "native")).toBe(
 			"Showed 2 of 3 image(s) to the user via mixed delivery (1 native, 1 as ANSI art). " +
@@ -270,7 +336,12 @@ describe("summaryText (locked wording, open question 5)", () => {
 	it("omits the Note clause when no shown file carries a note", () => {
 		const files: ShowImageFile[] = [
 			{ path: pngPath, ok: true, mode: "symbols" },
-			{ path: join(dir, "2.png"), ok: false, mode: "symbols", note: "failed to read" },
+			{
+				path: join(dir, "2.png"),
+				ok: false,
+				mode: "symbols",
+				note: "failed to read",
+			},
 		];
 		expect(summaryText(files, "symbols")).toBe(
 			"Showed 1 of 2 image(s) to the user as ANSI art. 1 file(s) could not be shown.",
@@ -281,14 +352,31 @@ describe("summaryText (locked wording, open question 5)", () => {
 describe("show_image execute — native path", () => {
 	it("returns a text note plus an image content block for a native-capable session", async () => {
 		const { tool, ctx } = makeTool({ capsImages: "kitty" });
-		const result = await tool.execute("t1", { path: "pic.png" }, neverAbort(), noop as never, ctx);
-		const text = result.content.filter((c) => c.type === "text").map((c) => c.text).join("\n");
-		expect(text).toBe("Showed image pic.png to the user via terminal-native rendering.");
+		const result = await tool.execute(
+			"t1",
+			{ path: "pic.png" },
+			neverAbort(),
+			noop as never,
+			ctx,
+		);
+		const text = result.content
+			.filter((c) => c.type === "text")
+			.map((c) => c.text)
+			.join("\n");
+		expect(text).toBe(
+			"Showed image pic.png to the user via terminal-native rendering.",
+		);
 		const images = result.content.filter((c) => c.type === "image");
 		expect(images).toHaveLength(1);
-		const image = images[0] as { type: "image"; data: string; mimeType: string };
+		const image = images[0] as {
+			type: "image";
+			data: string;
+			mimeType: string;
+		};
 		expect(image.mimeType).toBe("image/png");
-		expect(Buffer.from(image.data, "base64").subarray(0, 8).toString("hex")).toBe("89504e470d0a1a0a");
+		expect(
+			Buffer.from(image.data, "base64").subarray(0, 8).toString("hex"),
+		).toBe("89504e470d0a1a0a");
 		const details = result.details as ShowImageDetails;
 		expect(details.mode).toBe("native");
 		expect(details.payload).toBeUndefined();
@@ -300,13 +388,25 @@ describe("show_image execute — native path", () => {
 			capsImages: "kitty",
 			sniffMime: () => "application/octet-stream",
 		});
-		const promise = tool.execute("t11", { path: "pic.png" }, neverAbort(), noop as never, ctx);
+		const promise = tool.execute(
+			"t11",
+			{ path: "pic.png" },
+			neverAbort(),
+			noop as never,
+			ctx,
+		);
 		await expect(promise).rejects.toThrow(/not a recognized image format/);
 	});
 	it("preferNative=false routes a native-capable session to symbols (never chafa on native by default is the default, not the only route)", async () => {
 		const { tool, ctx } = makeTool({ capsImages: "kitty" });
 		const params = { path: "pic.png", format: "symbols" as const };
-		const result = await tool.execute("t2", params, neverAbort(), noop as never, ctx);
+		const result = await tool.execute(
+			"t2",
+			params,
+			neverAbort(),
+			noop as never,
+			ctx,
+		);
 		const details = result.details as ShowImageDetails;
 		expect(details.mode).toBe("symbols");
 		expect(details.payload).toBeDefined();
@@ -316,8 +416,17 @@ describe("show_image execute — native path", () => {
 describe("show_image execute — symbols path", () => {
 	it("keeps ANSI out of text, stashes cleaned payload in details, and notes truncation-free size", async () => {
 		const { tool, ctx } = makeTool({ capsImages: null, runStdout: RAW_ART });
-		const result = await tool.execute("t3", { path: "pic.png" }, neverAbort(), noop as never, ctx);
-		const text = result.content.filter((c) => c.type === "text").map((c) => c.text).join("\n");
+		const result = await tool.execute(
+			"t3",
+			{ path: "pic.png" },
+			neverAbort(),
+			noop as never,
+			ctx,
+		);
+		const text = result.content
+			.filter((c) => c.type === "text")
+			.map((c) => c.text)
+			.join("\n");
 		expect(text).not.toContain("\x1b[");
 		expect(text).toBe("Showed image pic.png to the user as ANSI art.");
 		const details = result.details as ShowImageDetails;
@@ -326,8 +435,17 @@ describe("show_image execute — symbols path", () => {
 	});
 	it("notes a chafa-produced-no-output result in the model-visible summary (§8)", async () => {
 		const { tool, ctx } = makeTool({ capsImages: null, runStdout: "" });
-		const result = await tool.execute("t12", { path: "pic.png" }, neverAbort(), noop as never, ctx);
-		const text = result.content.filter((c) => c.type === "text").map((c) => c.text).join("\n");
+		const result = await tool.execute(
+			"t12",
+			{ path: "pic.png" },
+			neverAbort(),
+			noop as never,
+			ctx,
+		);
+		const text = result.content
+			.filter((c) => c.type === "text")
+			.map((c) => c.text)
+			.join("\n");
 		expect(text).toBe(
 			"Showed image pic.png to the user as ANSI art. Note: chafa produced no output.",
 		);
@@ -354,18 +472,22 @@ describe("show_image execute — symbols path", () => {
 			noop as never,
 			shorterTool.ctx,
 		);
-		expect((shorterResult.details as ShowImageDetails).files[0]?.note).toBeUndefined();
+		expect(
+			(shorterResult.details as ShowImageDetails).files[0]?.note,
+		).toBeUndefined();
 	});
 	it("throws an actionable error when chafa is missing on the symbols path", async () => {
 		const { tool, ctx } = makeTool({
 			capsImages: null,
 			probeChafa: async () => {
-				throw new Error("chafa was not found on PATH (looked for chafa). Install it with: apt install chafa (or your distro's package). Or set CHAFA_BIN to its absolute path.");
+				throw new Error(
+					"chafa was not found on PATH (looked for chafa). Install it with: apt install chafa (or your distro's package). Or set CHAFA_BIN to its absolute path.",
+				);
 			},
 		});
-		await expect(tool.execute("t4", { path: "pic.png" }, neverAbort(), noop as never, ctx)).rejects.toThrow(
-			/not found on PATH/,
-		);
+		await expect(
+			tool.execute("t4", { path: "pic.png" }, neverAbort(), noop as never, ctx),
+		).rejects.toThrow(/not found on PATH/);
 	});
 	it("propagates an abort from runChafa as an abort, not a timeout or per-file failure", async () => {
 		const controller = new AbortController();
@@ -373,17 +495,31 @@ describe("show_image execute — symbols path", () => {
 			capsImages: null,
 			runChafa: async () => {
 				controller.abort();
-				const err = new Error("The operation was aborted") as Error & { code?: string };
+				const err = new Error("The operation was aborted") as Error & {
+					code?: string;
+				};
 				err.name = "AbortError";
 				err.code = "ABORT_ERR";
 				throw err;
 			},
 		});
 		await expect(
-			tool.execute("t10", { path: "pic.png" }, controller.signal, noop as never, ctx),
+			tool.execute(
+				"t10",
+				{ path: "pic.png" },
+				controller.signal,
+				noop as never,
+				ctx,
+			),
 		).rejects.toThrow(/aborted/);
 		await expect(
-			tool.execute("t10", { path: "pic.png" }, controller.signal, noop as never, ctx),
+			tool.execute(
+				"t10",
+				{ path: "pic.png" },
+				controller.signal,
+				noop as never,
+				ctx,
+			),
 		).rejects.not.toThrow(/timed out/);
 	});
 	it("throws an AbortError-shaped error when the signal is already aborted", async () => {
@@ -391,7 +527,13 @@ describe("show_image execute — symbols path", () => {
 		controller.abort();
 		const { tool, ctx } = makeTool({ capsImages: "kitty" });
 		const err = await tool
-			.execute("t15", { path: "pic.png" }, controller.signal, noop as never, ctx)
+			.execute(
+				"t15",
+				{ path: "pic.png" },
+				controller.signal,
+				noop as never,
+				ctx,
+			)
 			.then(
 				() => undefined,
 				(e: unknown) => e,
@@ -415,7 +557,13 @@ describe("probe plumbing (#007/#008)", () => {
 				};
 			},
 		});
-		await tool.execute("t20", { path: "pic.png" }, controller.signal, noop as never, ctx);
+		await tool.execute(
+			"t20",
+			{ path: "pic.png" },
+			controller.signal,
+			noop as never,
+			ctx,
+		);
 		expect(seen).toBe(controller.signal);
 	});
 });
@@ -513,10 +661,20 @@ describe("show_image execute — live width clamp (#011)", () => {
 describe("show_image execute — no-UI degrade (spec §7.5)", () => {
 	it("returns a plain-text summary with no image blocks and no ANSI when hasUI is false", async () => {
 		const { tool, ctx } = makeTool({ hasUI: false });
-		const result = await tool.execute("t5", { path: "pic.png" }, neverAbort(), noop as never, ctx);
+		const result = await tool.execute(
+			"t5",
+			{ path: "pic.png" },
+			neverAbort(),
+			noop as never,
+			ctx,
+		);
 		expect(result.content.every((c) => c.type === "text")).toBe(true);
-		const text = result.content.map((c) => (c.type === "text" ? c.text : "")).join("\n");
-		expect(text).toBe("Showed image pic.png to the user [image display unavailable in this session].");
+		const text = result.content
+			.map((c) => (c.type === "text" ? c.text : ""))
+			.join("\n");
+		expect(text).toBe(
+			"Showed image pic.png to the user [image display unavailable in this session].",
+		);
 		expect(text).not.toContain("\x1b[");
 		expect((result.details as ShowImageDetails).mode).toBe("none");
 	});
@@ -526,20 +684,32 @@ describe("show_image execute — input validation", () => {
 	it("rejects providing both path and glob", async () => {
 		const { tool, ctx } = makeTool();
 		await expect(
-			tool.execute("t6", { path: "pic.png", glob: "**/*.png" }, neverAbort(), noop as never, ctx),
+			tool.execute(
+				"t6",
+				{ path: "pic.png", glob: "**/*.png" },
+				neverAbort(),
+				noop as never,
+				ctx,
+			),
 		).rejects.toThrow(/exactly one of "path" or "glob"/);
 	});
 	it("rejects providing neither", async () => {
 		const { tool, ctx } = makeTool();
-		await expect(tool.execute("t7", {}, neverAbort(), noop as never, ctx)).rejects.toThrow(
-			/exactly one of "path" or "glob"/,
-		);
+		await expect(
+			tool.execute("t7", {}, neverAbort(), noop as never, ctx),
+		).rejects.toThrow(/exactly one of "path" or "glob"/);
 	});
 	it("throws no-files-matched for an unmatched explicit path", async () => {
 		const { tool, ctx } = makeTool();
-		await expect(tool.execute("t8", { path: "gone.png" }, neverAbort(), noop as never, ctx)).rejects.toThrow(
-			/no files matched/,
-		);
+		await expect(
+			tool.execute(
+				"t8",
+				{ path: "gone.png" },
+				neverAbort(),
+				noop as never,
+				ctx,
+			),
+		).rejects.toThrow(/no files matched/);
 	});
 	it("sanitizes control bytes in the no-match error (#038)", async () => {
 		const { tool, ctx } = makeTool();
@@ -565,7 +735,13 @@ describe("show_image execute — forced native on non-native caps errors (spec �
 	it("does not silently degrade", async () => {
 		const { tool, ctx } = makeTool({ capsImages: null, format: "native" });
 		await expect(
-			tool.execute("t9", { path: "pic.png", format: "native" }, neverAbort(), noop as never, ctx),
+			tool.execute(
+				"t9",
+				{ path: "pic.png", format: "native" },
+				neverAbort(),
+				noop as never,
+				ctx,
+			),
 		).rejects.toThrow(/format=native/);
 	});
 	it("words the hint from the injected environment (default tmux pane, #031 seam)", async () => {
@@ -575,7 +751,13 @@ describe("show_image execute — forced native on non-native caps errors (spec �
 			env: { TMUX: "/tmp/tmux-1000/default,1,0", TERM: "screen-256color" },
 		});
 		await expect(
-			tool.execute("t10", { path: "pic.png", format: "native" }, neverAbort(), noop as never, ctx),
+			tool.execute(
+				"t10",
+				{ path: "pic.png", format: "native" },
+				neverAbort(),
+				noop as never,
+				ctx,
+			),
 		).rejects.toThrow(/export PI_IMAGE_PROTOCOL=kitty/);
 	});
 });
@@ -585,7 +767,13 @@ describe("show_image execute — capability fallback ladder (headline fix)", () 
 		// The dual pi-tui instance hazard: caps seen by the extension are null,
 		// while pi's own settings (and host rendering) say kitty.
 		const { tool, ctx } = makeTool({ capsImages: null, hostImages: "kitty" });
-		const result = await tool.execute("t16", { path: "pic.png" }, neverAbort(), noop as never, ctx);
+		const result = await tool.execute(
+			"t16",
+			{ path: "pic.png" },
+			neverAbort(),
+			noop as never,
+			ctx,
+		);
 		const details = result.details as ShowImageDetails;
 		expect(details.mode).toBe("native");
 		const images = result.content.filter((c) => c.type === "image");
@@ -594,7 +782,9 @@ describe("show_image execute — capability fallback ladder (headline fix)", () 
 			.filter((c) => c.type === "text")
 			.map((c) => c.text)
 			.join("\n");
-		expect(text).toBe("Showed image pic.png to the user via terminal-native rendering.");
+		expect(text).toBe(
+			"Showed image pic.png to the user via terminal-native rendering.",
+		);
 	});
 	it("still chooses native when only PI_IMAGE_PROTOCOL names a supported protocol", async () => {
 		const { tool, ctx } = makeTool({
@@ -602,228 +792,234 @@ describe("show_image execute — capability fallback ladder (headline fix)", () 
 			hostImages: null,
 			envProtocol: "iterm2",
 		});
-		const result = await tool.execute("t17", { path: "pic.png" }, neverAbort(), noop as never, ctx);
+		const result = await tool.execute(
+			"t17",
+			{ path: "pic.png" },
+			neverAbort(),
+			noop as never,
+			ctx,
+		);
 		expect((result.details as ShowImageDetails).mode).toBe("native");
 	});
 });
 
 describe("show_image execute — bounded reads (#037)", () => {
-it("never full-reads on the symbols path; byteSize comes from stat", async () => {
-const { tool, ctx } = makeTool({
-capsImages: null,
-runStdout: RAW_ART,
-// A full read on the symbols path is the defect this test pins.
-readBytes: () => {
-throw new Error("full read must not happen on the symbols path");
-},
-fileSize: () => 12345,
-});
-const result = await tool.execute(
-"t-bounded-1",
-{ path: "pic.png" },
-neverAbort(),
-noop as never,
-ctx,
-);
-const details = result.details as ShowImageDetails;
-expect(details.mode).toBe("symbols");
-expect(details.files[0]?.byteSize).toBe(12345);
-});
+	it("never full-reads on the symbols path; byteSize comes from stat", async () => {
+		const { tool, ctx } = makeTool({
+			capsImages: null,
+			runStdout: RAW_ART,
+			// A full read on the symbols path is the defect this test pins.
+			readBytes: () => {
+				throw new Error("full read must not happen on the symbols path");
+			},
+			fileSize: () => 12345,
+		});
+		const result = await tool.execute(
+			"t-bounded-1",
+			{ path: "pic.png" },
+			neverAbort(),
+			noop as never,
+			ctx,
+		);
+		const details = result.details as ShowImageDetails;
+		expect(details.mode).toBe("symbols");
+		expect(details.files[0]?.byteSize).toBe(12345);
+	});
 
-it("refuses native delivery above the ceiling without a full read", async () => {
-const { tool, ctx } = makeTool({
-capsImages: "kitty",
-fileSize: () => 32 * 1024 * 1024 + 1,
-readBytes: () => {
-throw new Error("full read must not happen above the ceiling");
-},
-});
-await expect(
-tool.execute(
-"t-bounded-2",
-{ path: "pic.png" },
-neverAbort(),
-noop as never,
-ctx,
-),
-).rejects.toThrow(/native-delivery ceiling/);
-});
+	it("refuses native delivery above the ceiling without a full read", async () => {
+		const { tool, ctx } = makeTool({
+			capsImages: "kitty",
+			fileSize: () => 32 * 1024 * 1024 + 1,
+			readBytes: () => {
+				throw new Error("full read must not happen above the ceiling");
+			},
+		});
+		await expect(
+			tool.execute(
+				"t-bounded-2",
+				{ path: "pic.png" },
+				neverAbort(),
+				noop as never,
+				ctx,
+			),
+		).rejects.toThrow(/native-delivery ceiling/);
+	});
 });
 describe("show_image execute — bounded parallel rendering (#036)", () => {
-interface ChafaHandle {
-resolve: (value: string) => void;
-reject: (error: unknown) => void;
-}
-function makePooledTool(
-filePaths: string[],
-getSignal?: () => AbortSignal | undefined,
-) {
-let current = 0;
-let maxInFlight = 0;
-const pending: ChafaHandle[] = [];
-const tool = buildShowImageTool({
-resolveConfig: (perCall) => resolvedConfig(perCall),
-readHostImages: () => ({
-showImages: true,
-imageWidthCells: 60,
-images: null,
-}),
-getCapsImages: () => null,
-expandTargets: () => filePaths,
-readBytes: async () => Buffer.from(PNG_BASE64, "base64"),
-readHead: async () => Buffer.from(PNG_BASE64, "base64"),
-fileSize: () => Buffer.from(PNG_BASE64, "base64").byteLength,
-sniffMime: () => "image/png",
-probeChafa: async () => ({
-binary: "/usr/bin/chafa",
-version: { major: 1, minor: 18 },
-loaders: null,
-}),
-runChafa: () => {
-current += 1;
-maxInFlight = Math.max(maxInFlight, current);
-return new Promise<string>((resolve, reject) => {
-// Mirror the real subprocess: a shared abort rejects every job.
-const onAbort = () => {
-const err = new Error("aborted") as Error & { code?: string };
-err.name = "AbortError";
-reject(err);
-};
-const signal = getSignal?.();
-if (signal?.aborted) {
-onAbort();
-return;
-}
-signal?.addEventListener("abort", onAbort, { once: true });
-pending.push({
-resolve: (value: string) => {
-signal?.removeEventListener("abort", onAbort);
-current -= 1;
-resolve(value);
-},
-reject: (error: unknown) => {
-signal?.removeEventListener("abort", onAbort);
-current -= 1;
-reject(error);
-},
-});
-});
-},
-cleanPayload: cleanSymbolsPayload,
-env: () => ({}),
-platform: () => "linux",
-terminalColumns: () => 80,
-});
-return {
-tool,
-ctx: makeCtx(true),
-pending,
-maxInFlight: () => maxInFlight,
-};
-}
+	interface ChafaHandle {
+		resolve: (value: string) => void;
+		reject: (error: unknown) => void;
+	}
+	function makePooledTool(
+		filePaths: string[],
+		getSignal?: () => AbortSignal | undefined,
+	) {
+		let current = 0;
+		let maxInFlight = 0;
+		const pending: ChafaHandle[] = [];
+		const tool = buildShowImageTool({
+			resolveConfig: (perCall) => resolvedConfig(perCall),
+			readHostImages: () => ({
+				showImages: true,
+				imageWidthCells: 60,
+				images: null,
+			}),
+			getCapsImages: () => null,
+			expandTargets: () => filePaths,
+			readBytes: async () => Buffer.from(PNG_BASE64, "base64"),
+			readHead: async () => Buffer.from(PNG_BASE64, "base64"),
+			fileSize: () => Buffer.from(PNG_BASE64, "base64").byteLength,
+			sniffMime: () => "image/png",
+			probeChafa: async () => ({
+				binary: "/usr/bin/chafa",
+				version: { major: 1, minor: 18 },
+				loaders: null,
+			}),
+			runChafa: () => {
+				current += 1;
+				maxInFlight = Math.max(maxInFlight, current);
+				return new Promise<string>((resolve, reject) => {
+					// Mirror the real subprocess: a shared abort rejects every job.
+					const onAbort = () => {
+						const err = new Error("aborted") as Error & { code?: string };
+						err.name = "AbortError";
+						reject(err);
+					};
+					const signal = getSignal?.();
+					if (signal?.aborted) {
+						onAbort();
+						return;
+					}
+					signal?.addEventListener("abort", onAbort, { once: true });
+					pending.push({
+						resolve: (value: string) => {
+							signal?.removeEventListener("abort", onAbort);
+							current -= 1;
+							resolve(value);
+						},
+						reject: (error: unknown) => {
+							signal?.removeEventListener("abort", onAbort);
+							current -= 1;
+							reject(error);
+						},
+					});
+				});
+			},
+			cleanPayload: cleanSymbolsPayload,
+			env: () => ({}),
+			platform: () => "linux",
+			terminalColumns: () => 80,
+		});
+		return {
+			tool,
+			ctx: makeCtx(true),
+			pending,
+			maxInFlight: () => maxInFlight,
+		};
+	}
 
-it("runs at most 4 chafa renders concurrently and assembles results in order", async () => {
-const paths = Array.from({ length: 5 }, (_, i) => join(dir, `f${i}.png`));
-const { tool, ctx, pending, maxInFlight } = makePooledTool(paths);
-const run = tool.execute(
-"p1",
-{ glob: "f*.png" },
-neverAbort(),
-noop as never,
-ctx,
-);
-await vi.waitFor(() => {
-expect(pending.length).toBe(4);
-});
-expect(maxInFlight()).toBe(4);
-// Resolve the first four; the fifth must then start (gate frees a slot).
-for (let i = 0; i < 4; i++) pending[i]!.resolve(RAW_ART);
-await vi.waitFor(() => {
-expect(pending.length).toBe(5);
-});
-pending[4]!.resolve(RAW_ART);
-const result = await run;
-const details = result.details as ShowImageDetails;
-expect(details.files.map((f) => f.path)).toEqual(paths);
-expect(details.files.every((f) => f.ok)).toBe(true);
-// Labeled blocks keep match order (byte-identical to serial assembly).
-const label = (p: string) => `[${p.split("/").pop()}]\n${CLEAN_ART}`;
-expect(details.payload).toBe(paths.map(label).join("\n\n"));
-});
+	it("runs at most 4 chafa renders concurrently and assembles results in order", async () => {
+		const paths = Array.from({ length: 5 }, (_, i) => join(dir, `f${i}.png`));
+		const { tool, ctx, pending, maxInFlight } = makePooledTool(paths);
+		const run = tool.execute(
+			"p1",
+			{ glob: "f*.png" },
+			neverAbort(),
+			noop as never,
+			ctx,
+		);
+		await vi.waitFor(() => {
+			expect(pending.length).toBe(4);
+		});
+		expect(maxInFlight()).toBe(4);
+		// Resolve the first four; the fifth must then start (gate frees a slot).
+		for (let i = 0; i < 4; i++) pending[i]!.resolve(RAW_ART);
+		await vi.waitFor(() => {
+			expect(pending.length).toBe(5);
+		});
+		pending[4]!.resolve(RAW_ART);
+		const result = await run;
+		const details = result.details as ShowImageDetails;
+		expect(details.files.map((f) => f.path)).toEqual(paths);
+		expect(details.files.every((f) => f.ok)).toBe(true);
+		// Labeled blocks keep match order (byte-identical to serial assembly).
+		const label = (p: string) => `[${p.split("/").pop()}]\n${CLEAN_ART}`;
+		expect(details.payload).toBe(paths.map(label).join("\n\n"));
+	});
 
-it("keeps per-file failures and notes identical under the pool", async () => {
-const paths = Array.from({ length: 5 }, (_, i) => join(dir, `g${i}.png`));
-const { tool, ctx, pending } = makePooledTool(paths);
-const run = tool.execute(
-"p2",
-{ glob: "g*.png" },
-neverAbort(),
-noop as never,
-ctx,
-);
-await vi.waitFor(() => {
-expect(pending.length).toBe(4);
-});
-pending[0]!.resolve(RAW_ART);
-pending[1]!.reject(new Error("chafa exited with an error: boom"));
-pending[2]!.resolve(RAW_ART);
-pending[3]!.resolve(RAW_ART);
-await vi.waitFor(() => {
-expect(pending.length).toBe(5);
-});
-pending[4]!.resolve(RAW_ART);
-const result = await run;
-const details = result.details as ShowImageDetails;
-expect(details.files.map((f) => f.path)).toEqual(paths);
-expect(details.files[1]).toMatchObject({
-ok: false,
-note: "chafa exited with an error: boom",
-});
-expect(details.files.filter((f) => f.ok)).toHaveLength(4);
-});
+	it("keeps per-file failures and notes identical under the pool", async () => {
+		const paths = Array.from({ length: 5 }, (_, i) => join(dir, `g${i}.png`));
+		const { tool, ctx, pending } = makePooledTool(paths);
+		const run = tool.execute(
+			"p2",
+			{ glob: "g*.png" },
+			neverAbort(),
+			noop as never,
+			ctx,
+		);
+		await vi.waitFor(() => {
+			expect(pending.length).toBe(4);
+		});
+		pending[0]!.resolve(RAW_ART);
+		pending[1]!.reject(new Error("chafa exited with an error: boom"));
+		pending[2]!.resolve(RAW_ART);
+		pending[3]!.resolve(RAW_ART);
+		await vi.waitFor(() => {
+			expect(pending.length).toBe(5);
+		});
+		pending[4]!.resolve(RAW_ART);
+		const result = await run;
+		const details = result.details as ShowImageDetails;
+		expect(details.files.map((f) => f.path)).toEqual(paths);
+		expect(details.files[1]).toMatchObject({
+			ok: false,
+			note: "chafa exited with an error: boom",
+		});
+		expect(details.files.filter((f) => f.ok)).toHaveLength(4);
+	});
 
-it("rethrows an abort promptly through the pool", async () => {
-const paths = Array.from({ length: 3 }, (_, i) => join(dir, `h${i}.png`));
-const controller = new AbortController();
-const { tool, ctx, pending } = makePooledTool(
-paths,
-() => controller.signal,
-);
-const run = tool.execute(
-"p3",
-{ glob: "h*.png" },
-controller.signal,
-noop as never,
-ctx,
-);
-await vi.waitFor(() => {
-expect(pending.length).toBe(3);
-});
-controller.abort();
-await expect(run).rejects.toMatchObject({ name: "AbortError" });
-});
+	it("rethrows an abort promptly through the pool", async () => {
+		const paths = Array.from({ length: 3 }, (_, i) => join(dir, `h${i}.png`));
+		const controller = new AbortController();
+		const { tool, ctx, pending } = makePooledTool(
+			paths,
+			() => controller.signal,
+		);
+		const run = tool.execute(
+			"p3",
+			{ glob: "h*.png" },
+			controller.signal,
+			noop as never,
+			ctx,
+		);
+		await vi.waitFor(() => {
+			expect(pending.length).toBe(3);
+		});
+		controller.abort();
+		await expect(run).rejects.toMatchObject({ name: "AbortError" });
+	});
 });
 describe("show_image execute — abort-aware expansion (#035)", () => {
-it("passes its abort signal into expandTargets", async () => {
-const seen: (AbortSignal | undefined)[] = [];
-const { tool, ctx } = makeTool({
-expandTargets: (_target, _cwd, signal) => {
-seen.push(signal);
-return [];
-},
-});
-const controller = new AbortController();
-await expect(
-tool.execute(
-"t-abort",
-{ path: "pic.png" },
-controller.signal,
-noop as never,
-ctx,
-),
-).rejects.toThrow(/no files matched/);
-expect(seen).toEqual([controller.signal]);
-});
+	it("passes its abort signal into expandTargets", async () => {
+		const seen: (AbortSignal | undefined)[] = [];
+		const { tool, ctx } = makeTool({
+			expandTargets: (_target, _cwd, signal) => {
+				seen.push(signal);
+				return [];
+			},
+		});
+		const controller = new AbortController();
+		await expect(
+			tool.execute(
+				"t-abort",
+				{ path: "pic.png" },
+				controller.signal,
+				noop as never,
+				ctx,
+			),
+		).rejects.toThrow(/no files matched/);
+		expect(seen).toEqual([controller.signal]);
+	});
 });
 describe("show_image execute — single host-settings read (#044)", () => {
 	it("reads host settings exactly once across config, ladder and delivery", async () => {
@@ -989,7 +1185,9 @@ describe("show_image execute — multi-image symbols output (#005)", () => {
 			noop as never,
 			makeCtx(true),
 		);
-		expect((result.details as ShowImageDetails).payload).toBe(`[b.png]\n${ART_B}`);
+		expect((result.details as ShowImageDetails).payload).toBe(
+			`[b.png]\n${ART_B}`,
+		);
 	});
 	it("contributes no block for a per-file failure", async () => {
 		const tool = multiTool([
@@ -1020,7 +1218,13 @@ describe("show_image execute — mime-aware delivery (#014/#015)", () => {
 			sniffMime: () => "image/svg+xml",
 			probeChafa: async () => ({ ...CHAFA, loaders: ["PNG", "SVG"] }),
 		});
-		const result = await tool.execute("v1", { path: "pic.png" }, neverAbort(), noop as never, ctx);
+		const result = await tool.execute(
+			"v1",
+			{ path: "pic.png" },
+			neverAbort(),
+			noop as never,
+			ctx,
+		);
 		expect(result.content.some((c) => c.type === "image")).toBe(false);
 		const details = result.details as ShowImageDetails;
 		expect(details.mode).toBe("native");
@@ -1043,11 +1247,19 @@ describe("show_image execute — mime-aware delivery (#014/#015)", () => {
 			capsImages: "kitty",
 			sniffMime: () => "image/svg+xml",
 			probeChafa: async () => {
-				throw new Error("chafa must not be probed for a forced-native unsafe mime");
+				throw new Error(
+					"chafa must not be probed for a forced-native unsafe mime",
+				);
 			},
 		});
 		await expect(
-			tool.execute("v2", { path: "pic.png", format: "native" }, neverAbort(), noop as never, ctx),
+			tool.execute(
+				"v2",
+				{ path: "pic.png", format: "native" },
+				neverAbort(),
+				noop as never,
+				ctx,
+			),
 		).rejects.toThrow(/cannot be delivered as a native image block/);
 	});
 	it("errors per file when the chafa build lacks the format's loader", async () => {
@@ -1066,7 +1278,13 @@ describe("show_image execute — mime-aware delivery (#014/#015)", () => {
 			sniffMime: () => "image/bmp",
 			probeChafa: async () => ({ ...CHAFA, loaders: null }),
 		});
-		const result = await tool.execute("v4", { path: "pic.png" }, neverAbort(), noop as never, ctx);
+		const result = await tool.execute(
+			"v4",
+			{ path: "pic.png" },
+			neverAbort(),
+			noop as never,
+			ctx,
+		);
 		const details = result.details as ShowImageDetails;
 		expect(details.files[0]?.ok).toBe(true);
 		expect(details.files[0]?.note).toBeUndefined();
@@ -1081,7 +1299,13 @@ describe("show_image execute — mime-aware delivery (#014/#015)", () => {
 				return { ...CHAFA, loaders: null };
 			},
 		});
-		await tool.execute("v5", { path: "pic.png" }, neverAbort(), noop as never, ctx);
+		await tool.execute(
+			"v5",
+			{ path: "pic.png" },
+			neverAbort(),
+			noop as never,
+			ctx,
+		);
 		expect(probes).toBe(0);
 	});
 	it("keeps native delivery working when chafa is absent", async () => {
@@ -1091,7 +1315,13 @@ describe("show_image execute — mime-aware delivery (#014/#015)", () => {
 				throw new Error("chafa was not found on PATH (looked for chafa).");
 			},
 		});
-		const result = await tool.execute("v6", { path: "pic.png" }, neverAbort(), noop as never, ctx);
+		const result = await tool.execute(
+			"v6",
+			{ path: "pic.png" },
+			neverAbort(),
+			noop as never,
+			ctx,
+		);
 		expect(result.content.some((c) => c.type === "image")).toBe(true);
 		expect((result.details as ShowImageDetails).files[0]?.mode).toBe("native");
 	});
@@ -1105,9 +1335,18 @@ describe("show_image execute — mime-aware delivery (#014/#015)", () => {
 		).rejects.toThrow(/not a recognized image format/);
 	});
 	it("EXHAUSTIVE: no image block is ever emitted for a non-safe mime across the matrix", async () => {
-		const cases: Array<{ capsImages: AgentCapsImages; mime: string; loaders: string[] | null }> = [];
+		const cases: Array<{
+			capsImages: AgentCapsImages;
+			mime: string;
+			loaders: string[] | null;
+		}> = [];
 		for (const capsImages of ["kitty", "iterm2", null] as const) {
-			for (const mime of ["image/svg+xml", "image/avif", "image/bmp", "image/x-icon"]) {
+			for (const mime of [
+				"image/svg+xml",
+				"image/avif",
+				"image/bmp",
+				"image/x-icon",
+			]) {
 				for (const loaders of [null, ALL_LOADERS]) {
 					cases.push({ capsImages, mime, loaders });
 				}

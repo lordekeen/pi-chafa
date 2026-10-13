@@ -1,12 +1,12 @@
-import { describe, expect, it } from "vitest";
 import type { AgentToolResult } from "@earendil-works/pi-coding-agent";
 import type { Component } from "@earendil-works/pi-tui";
+import { describe, expect, it } from "vitest";
 import {
 	buildShowImageTool,
-	renderShowCall,
-	renderShowResult,
 	type RenderStateLike,
 	type RenderThemeLike,
+	renderShowCall,
+	renderShowResult,
 } from "../src/show-image.js";
 import type { ShowImageDetails } from "../src/types.js";
 
@@ -157,7 +157,11 @@ describe("renderResult — themed strip + art on the terminal background (spec �
 
 describe("renderCall (spec §4.1 registration table: compact 'Show Image <target>')", () => {
 	it("shows the path target", () => {
-		const component = renderShowCall({ path: "/abs/pic.png" }, PLAIN_THEME, SETTLED);
+		const component = renderShowCall(
+			{ path: "/abs/pic.png" },
+			PLAIN_THEME,
+			SETTLED,
+		);
 		expect(rendered(component)).toBe(" Show Image /abs/pic.png");
 	});
 	it("shows the glob target", () => {

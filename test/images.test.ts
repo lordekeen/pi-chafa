@@ -1,8 +1,20 @@
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import {
+	mkdirSync,
+	mkdtempSync,
+	rmSync,
+	symlinkSync,
+	writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join, sep } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { expandTargets, globToRegExp, normalizeTargetPath, readBytes, sniffMime } from "../src/images.js";
+import {
+	expandTargets,
+	globToRegExp,
+	normalizeTargetPath,
+	readBytes,
+	sniffMime,
+} from "../src/images.js";
 
 let dir: string;
 beforeEach(() => {
@@ -21,7 +33,9 @@ afterEach(() => {
 
 describe("globToRegExp", () => {
 	it("anchors and matches * within a segment only", () => {
-		expect(globToRegExp("screenshots/*.png").test("screenshots/a.png")).toBe(true);
+		expect(globToRegExp("screenshots/*.png").test("screenshots/a.png")).toBe(
+			true,
+		);
 		expect(globToRegExp("screenshots/*.png").test("sub/a.png")).toBe(false);
 		expect(globToRegExp("*.png").test("sub/a.png")).toBe(false);
 	});
@@ -48,7 +62,9 @@ describe("globToRegExp", () => {
 
 describe("expandTargets", () => {
 	it("resolves an explicit relative file against cwd", () => {
-		expect(expandTargets("screenshots/a.png", dir)).toEqual([join(dir, "screenshots", "a.png")]);
+		expect(expandTargets("screenshots/a.png", dir)).toEqual([
+			join(dir, "screenshots", "a.png"),
+		]);
 	});
 	it("resolves an absolute path unchanged", () => {
 		const abs = join(dir, "screenshots", "a.png");
@@ -58,7 +74,9 @@ describe("expandTargets", () => {
 		expect(expandTargets(join(dir, "nope.png"), dir)).toEqual([]);
 	});
 	it("throws a dedicated error for an explicit directory target", () => {
-		expect(() => expandTargets("screenshots", dir)).toThrow(/is a directory; show_image targets files/);
+		expect(() => expandTargets("screenshots", dir)).toThrow(
+			/is a directory; show_image targets files/,
+		);
 	});
 	it("expands a glob to sorted existing files only", () => {
 		expect(expandTargets("screenshots/*", dir)).toEqual([
@@ -96,10 +114,14 @@ describe("expandTargets", () => {
 	});
 	it("matches nested files with ** and skips directories", () => {
 		expect(expandTargets("**/*.gif", dir)).toEqual([join(dir, "sub", "c.gif")]);
-		expect(expandTargets("**/*.webp", dir)).toEqual([join(dir, "sub", "deep", "d.webp")]);
+		expect(expandTargets("**/*.webp", dir)).toEqual([
+			join(dir, "sub", "deep", "d.webp"),
+		]);
 	});
 	it("throws no-files-matched for a glob with zero matches", () => {
-		expect(() => expandTargets("**/*.svg", dir)).toThrow(/no files matched \*\*\/\*\.svg/);
+		expect(() => expandTargets("**/*.svg", dir)).toThrow(
+			/no files matched \*\*\/\*\.svg/,
+		);
 	});
 	it("sanitizes control bytes in the directory error message (#038)", () => {
 		const evilDir = join(dir, "evil\x1b[2Jdir");
@@ -111,7 +133,9 @@ describe("expandTargets", () => {
 			threw = error as Error;
 		}
 		expect(threw).not.toBeNull();
-		expect(threw!.message).toContain("is a directory; show_image targets files");
+		expect(threw!.message).toContain(
+			"is a directory; show_image targets files",
+		);
 		expect(threw!.message).not.toContain("\x1b");
 	});
 	it("sanitizes control bytes in the no-match error message (#038)", () => {
@@ -168,9 +192,9 @@ describe("expandTargets — pi path conventions (#028)", () => {
 	});
 
 	it("normalizes unicode spaces and file:// URLs", () => {
-		expect(
-			normalizeTargetPath("screenshots\u00A0a.png", "/fake/home"),
-		).toBe("screenshots a.png");
+		expect(normalizeTargetPath("screenshots\u00A0a.png", "/fake/home")).toBe(
+			"screenshots a.png",
+		);
 		expect(
 			normalizeTargetPath(`file://${dir}/screenshots/a.png`, "/fake/home"),
 		).toBe(join(dir, "screenshots", "a.png"));
@@ -185,12 +209,12 @@ describe("expandTargets — pi path conventions (#028)", () => {
 	});
 
 	it("accepts the Windows ~\\ form only when the platform says win32 (#031 seam)", () => {
-		expect(normalizeTargetPath("~\\Pictures\\a.png", "/fake/home", "win32")).toBe(
-			join("/fake/home", "Pictures\\a.png"),
-		);
-		expect(normalizeTargetPath("~\\Pictures\\a.png", "/fake/home", "linux")).toBe(
-			"~\\Pictures\\a.png",
-		);
+		expect(
+			normalizeTargetPath("~\\Pictures\\a.png", "/fake/home", "win32"),
+		).toBe(join("/fake/home", "Pictures\\a.png"));
+		expect(
+			normalizeTargetPath("~\\Pictures\\a.png", "/fake/home", "linux"),
+		).toBe("~\\Pictures\\a.png");
 	});
 });
 
@@ -200,7 +224,9 @@ describe("expandTargets — dotfiles (#029)", () => {
 		writeFileSync(join(dir, "visible.png"), "png-bytes");
 		mkdirSync(join(dir, ".hidden-dir"), { recursive: true });
 		writeFileSync(join(dir, ".hidden-dir", "inside.png"), "png-bytes");
-		expect(expandTargets("*.png", dir, dir)).toEqual([join(dir, "visible.png")]);
+		expect(expandTargets("*.png", dir, dir)).toEqual([
+			join(dir, "visible.png"),
+		]);
 		expect(expandTargets("**/*.png", dir, dir)).not.toContain(
 			join(dir, ".hidden.png"),
 		);
@@ -303,7 +329,9 @@ describe("expandTargets — symlinks (#001)", () => {
 });
 
 describe("readBytes + sniffMime", () => {
-	const PNG = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 1]);
+	const PNG = Buffer.from([
+		0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 1,
+	]);
 	const JPEG = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0, 0]);
 	const GIF = Buffer.from("GIF89a....", "ascii");
 	const GIF87 = Buffer.from("GIF87a....", "ascii");
@@ -321,7 +349,9 @@ describe("readBytes + sniffMime", () => {
 		);
 	});
 	it("falls back to application/octet-stream for unknown bytes", () => {
-		expect(sniffMime(Buffer.from("hello world"))).toBe("application/octet-stream");
+		expect(sniffMime(Buffer.from("hello world"))).toBe(
+			"application/octet-stream",
+		);
 	});
 	const BMP = Buffer.from([0x42, 0x4d, 0x36, 0x00, 0x00, 0x00, 0x00, 0x00]);
 	const ICO = Buffer.from([0x00, 0x00, 0x01, 0x00, 0x01, 0x00, 0x10, 0x10]);
@@ -363,17 +393,19 @@ describe("readBytes + sniffMime", () => {
 		expect(sniffMime(mp4)).toBe("application/octet-stream");
 	});
 	it("sniffs svg with and without a prolog, BOM, or doctype (#014)", () => {
-		expect(sniffMime(Buffer.from('<svg xmlns="http://www.w3.org/2000/svg"></svg>'))).toBe(
-			"image/svg+xml",
-		);
+		expect(
+			sniffMime(Buffer.from('<svg xmlns="http://www.w3.org/2000/svg"></svg>')),
+		).toBe("image/svg+xml");
 		expect(
 			sniffMime(
-				Buffer.from('<?xml version="1.0" encoding="UTF-8"?>\n<svg xmlns="x"></svg>'),
+				Buffer.from(
+					'<?xml version="1.0" encoding="UTF-8"?>\n<svg xmlns="x"></svg>',
+				),
 			),
 		).toBe("image/svg+xml");
-		expect(sniffMime(Buffer.from("\uFEFF\n  <svg viewBox=\"0 0 1 1\"></svg>"))).toBe(
-			"image/svg+xml",
-		);
+		expect(
+			sniffMime(Buffer.from('\uFEFF\n  <svg viewBox="0 0 1 1"></svg>')),
+		).toBe("image/svg+xml");
 		expect(
 			sniffMime(
 				Buffer.from(
@@ -388,18 +420,22 @@ describe("readBytes + sniffMime", () => {
 			'<?xml version="1.0"?>\n<!DOCTYPE svg>\n<!-- c -->\n<svg></svg>',
 			'\uFEFF<?xml version="1.0"?>\n<!-- c -->\n<svg></svg>',
 			"<!-- c -->\n<svg></svg>",
-			"<!-- a --><!-- b -->\n<!DOCTYPE svg>\n<?xml version=\"1.0\"?>\n<svg></svg>",
+			'<!-- a --><!-- b -->\n<!DOCTYPE svg>\n<?xml version="1.0"?>\n<svg></svg>',
 		];
 		for (const doc of docs) {
 			expect(sniffMime(Buffer.from(doc))).toBe("image/svg+xml");
 		}
 	});
 	it("does not treat text that merely mentions svg as an image (#014)", () => {
-		expect(sniffMime(Buffer.from("hello <svg world"))).toBe("application/octet-stream");
+		expect(sniffMime(Buffer.from("hello <svg world"))).toBe(
+			"application/octet-stream",
+		);
 		expect(sniffMime(Buffer.from('<?xml version="1.0"?><not-an-svg/>'))).toBe(
 			"application/octet-stream",
 		);
-		expect(sniffMime(Buffer.from("<svgfoo></svgfoo>"))).toBe("application/octet-stream");
+		expect(sniffMime(Buffer.from("<svgfoo></svgfoo>"))).toBe(
+			"application/octet-stream",
+		);
 	});
 	it("keeps the #014 decoy strictness after stripping the prefix (#023)", () => {
 		expect(
@@ -420,6 +456,8 @@ describe("readBytes + sniffMime", () => {
 		expect(bytes.toString("utf8")).toBe("text");
 	});
 	it("rejects unreadable files with the path in the message", async () => {
-		await expect(readBytes(join(dir, "missing.png"))).rejects.toThrow(/missing\.png/);
+		await expect(readBytes(join(dir, "missing.png"))).rejects.toThrow(
+			/missing\.png/,
+		);
 	});
 });

@@ -52,7 +52,7 @@ Every pull request or task MUST pass all four checks cleanly before completion. 
 
 ```bash
 npm run typecheck   # tsc --noEmit (strict TypeScript)
-npm run lint        # biome check src/
+npm run lint        # biome check src/ test/  (both trees are formatted and linted)
 npm test            # vitest run (all unit and integration tests)
 npm run build       # tsc -p tsconfig.build.json (emits to dist/)
 ```
@@ -84,6 +84,6 @@ Published as **`@lordekeen/pi-chafa`** with `publishConfig.access: "public"`.
 - **TDD & Injected Dependencies:** Pure logic is separated from side effects. Tool implementations accept injected dependency records (e.g. [`ShowImageDeps`](src/show-image.ts)) so test suites run in headless Node without requiring an active pi TUI session or a physical GPU/display.
 - **Regex Safety:** Due to Biome's `noControlCharactersInRegex` lint rule, ANSI escape patterns and control-character regexes must be instantiated via `new RegExp(...)` from string constants (e.g., `ESC = "\x1b"`).
 - **Silent Degradation:** Invalid or unknown configuration fields are ignored silently rather than crashing the extension.
-- **Test-layer split:** Unit/integration tests inject fakes for chafa and stay hermetic. Coverage of the real binary, the real filesystem, and the real capability ladder lives in [`scripts/smoke.mjs`](scripts/smoke.mjs). Do not "fix" a hermetic test by pointing it at the real binary.
+- **Test-layer split:** Unit/integration tests inject fakes for chafa and stay hermetic. Coverage of the real binary, the real filesystem, and the real capability ladder lives in [`scripts/smoke.mjs`](scripts/smoke.mjs). Do not "fix" a hermetic test by pointing it at the real binary. Both trees are linted (`biome check src/ test/`); `test/**` relaxes only `noNonNullAssertion`, because `x!` after an assertion is the compact idiom there (#064). Panel tests mount the command through the shared [`fakePanel`](test/commands-images.test.ts) fixture (the `ui.custom` plumbing: fake tui handle, plain theme, live keybindings, `done` stub) instead of hand-rolling it per test.
 - **Seam trap:** [`buildShowImageTool`](src/show-image.ts) merges `{ ...defaultDeps(), ...deps }`; execute reads host settings exactly **once** through the injectable `readHostImages` and computes the spec §6.4 ladder from that one value plus `getCapabilities()`/env/platform — there is no separate `capsImages` seam (#044). A test that injects `readHostImages` with `images: null` must not expect native delivery. The ladder is covered directly via [`resolveCapsImages`](src/detect.ts), and end to end by the smoke runner calling `buildShowImageTool()` with no overrides.
 - **Conventional Commits:** Prefix commits with `feat:`, `fix:`, `docs:`, `chore:`, or `test:`.

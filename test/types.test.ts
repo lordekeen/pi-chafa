@@ -1,11 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
-	COLOR_MODES,
-	DELIVERY_FORMATS,
-	DITHER_MODES,
 	type ChafaConfig,
+	COLOR_MODES,
 	type ColorsMode,
+	DELIVERY_FORMATS,
 	type DeliveryFormat,
+	DITHER_MODES,
 	type DitherMode,
 } from "../src/types.js";
 
